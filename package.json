@@ -1,0 +1,122 @@
+{
+  "name": "csv-grid-editor",
+  "displayName": "CSV Grid Editor: CSV & TSV Viewer",
+  "description": "Open, view and edit CSV and TSV files in a fast sortable filterable grid. Inline editing, find and replace, freeze rows, column stats, Excel copy and paste and export to JSON. Free.",
+  "version": "1.13.1",
+  "publisher": "okok909090",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qqqqqqqqq1122/csv-grid-editor"
+  },
+  "sponsor": {
+    "url": "https://github.com/sponsors/Robin-Reiche"
+  },
+  "homepage": "https://github.com/qqqqqqqqq1122/csv-grid-editor",
+  "bugs": {
+    "url": "https://github.com/qqqqqqqqq1122/csv-grid-editor/issues"
+  },
+  "qna": "marketplace",
+  "galleryBanner": {
+    "color": "#1e508c",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Data Science",
+    "Visualization"
+  ],
+  "keywords": [
+    "csv",
+    "tsv",
+    "spreadsheet",
+    "data grid",
+    "delimited",
+    "column statistics",
+    "find and replace",
+    "large csv",
+    "excel alternative",
+    "csv to json"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+"contributes": {
+    "customEditors": [
+      {
+        "viewType": "csvViewer.grid",
+        "displayName": "CSV Grid Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "csvGridEditor.setLargeFileMode",
+        "title": "Set Large File Mode (head / tail / all)",
+        "category": "CSV Grid Editor"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "csvGridEditor.setLargeFileMode",
+          "when": "resourceExtname == .csv || resourceExtname == .tsv",
+          "group": "csvGridEditor@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "CSV Grid Editor",
+      "properties": {
+        "csvGridEditor.largeFileMode": {
+          "type": "string",
+          "default": "ask",
+          "enum": ["ask", "head", "tail", "all"],
+          "enumDescriptions": [
+            "Ask every time: show a picker when opening a file larger than 10 MB (original behavior).",
+            "Head: preview the first csvGridEditor.headRows rows of large files.",
+            "Tail: preview the last csvGridEditor.headRows rows of large files.",
+            "All: always load the full file into the grid (may be slow for very large files)."
+          ],
+          "description": "Behavior when opening CSV files larger than 10MB."
+        },
+        "csvGridEditor.headRows": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "description": "Number of rows to display in head/tail preview mode."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./ && npm run copy-assets && npm run bundle",
+    "bundle": "esbuild src/webview/index.ts --bundle --outfile=media/webview.js --platform=browser --target=es2020",
+    "copy-assets": "node -e \"const fs=require('fs');fs.mkdirSync('media',{recursive:true});const cp=(s,d)=>fs.copyFileSync(s,d);cp('node_modules/@vscode/codicons/dist/codicon.css','media/codicon.css');cp('node_modules/@vscode/codicons/dist/codicon.ttf','media/codicon.ttf');cp('node_modules/ag-grid-community/dist/ag-grid-community.min.js','media/ag-grid-community.min.js');cp('node_modules/ag-grid-community/styles/ag-grid.css','media/ag-grid.css');cp('node_modules/ag-grid-community/styles/ag-theme-alpine.css','media/ag-theme-alpine.css');\"",
+    "watch": "tsc -watch -p ./",
+    "watch:web": "esbuild src/webview/index.ts --bundle --outfile=media/webview.js --platform=browser --watch",
+    "pretest": "tsc -p ./",
+    "test": "node test/run-all.cjs",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/codicons": "^0.0.45",
+    "ag-grid-community": "32.3.3",
+    "esbuild": "^0.27.4",
+    "typescript": "^5.3.0"
+  }
+}
