@@ -1,6 +1,6 @@
 {
-  "name": "csv-grid-editor",
-  "displayName": "CSV Grid Editor: CSV & TSV Viewer",
+  "name": "csv-grid-editor-plus",
+  "displayName": "CSV Grid Editor Plus: CSV & TSV Viewer",
   "description": "Open, view and edit CSV and TSV files in a fast sortable filterable grid. Inline editing, find and replace, freeze rows, column stats, Excel copy and paste and export to JSON. Free.",
   "version": "1.13.1",
   "publisher": "okok909090",

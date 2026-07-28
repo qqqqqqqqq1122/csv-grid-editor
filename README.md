@@ -1,14 +1,15 @@
 ## Revision History
 
+- **2026-07-28 21:03:56** — Renamed the extension `name` from `csv-grid-editor` to `csv-grid-editor-plus` (display name "CSV Grid Editor Plus") because the Marketplace rejected the original name as already taken; badges updated to `okok909090.csv-grid-editor-plus`.
 - **2026-07-28 20:47:26** — Re-published the fork under a new identity: `publisher` changed from `RobinReiche` to `okok909090`, `repository` / `homepage` / `bugs` URLs point to `github.com/qqqqqqqqq1122/csv-grid-editor`, Marketplace badges updated to the new publisher, and a full Chinese translation (中文版) appended at the bottom of this README. Original author attribution (LICENSE, sponsor, Contact section) kept per MIT.
 - **2026-07-28 20:17:58** — Renamed the `largeFileMode` value `prompt` to `ask` (the "ask every time" option, i.e. the original interactive behavior), so the four user-settable values are now `ask` / `head` / `tail` / `all` with `ask` as the default. The legacy value `prompt` is still accepted and treated as `ask`.
 - **2026-07-28 20:13:24** — Added configurable large-file mode: `csvGridEditor.largeFileMode` now accepts `prompt` / `head` / `tail` / `all`, `csvGridEditor.headRows` controls the preview row count, and a new Command Palette / right-click command `CSV Grid Editor: Set Large File Mode (head / tail / all)` switches modes at any time. Details in [Local Modification: Configurable Large File Mode](#local-modification-configurable-large-file-mode) at the bottom of this file.
 
 # CSV Grid Editor
 
-[![Version](https://badgen.net/vs-marketplace/v/okok909090.csv-grid-editor)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor)
-[![Installs](https://badgen.net/vs-marketplace/i/okok909090.csv-grid-editor)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor)
-[![Rating](https://badgen.net/vs-marketplace/rating/okok909090.csv-grid-editor)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor&ssr=false#review-details)
+[![Version](https://badgen.net/vs-marketplace/v/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
+[![Installs](https://badgen.net/vs-marketplace/i/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
+[![Rating](https://badgen.net/vs-marketplace/rating/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus&ssr=false#review-details)
 
 A fast, feature-rich CSV/TSV editor for Visual Studio Code. Opens CSV files in a sortable, filterable, editable grid — right inside your editor, no external tools needed.
 
