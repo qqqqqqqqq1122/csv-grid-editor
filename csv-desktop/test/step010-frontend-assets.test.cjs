@@ -99,5 +99,14 @@ test('host commands wired: open, save, export, config, theme', () => {
     assert(indexHtml.includes("'open-file'"), 'open-file listener missing');
 });
 
+test('open-file before first boot triggers openPending (menu-open regression)', () => {
+    // Regression: previously the listener only reloaded when already booted,
+    // so opening a file via File → Open on a freshly launched (fileless) app
+    // silently did nothing and the UI stayed empty.
+    const m = indexHtml.match(/listen\('open-file'[\s\S]{0,400}?\}\)/);
+    assert(m, 'open-file listener found');
+    assert(m[0].match(/openPending\(/), 'listener must call openPending() when not booted');
+});
+
 if (failures) { console.error('\n' + failures + ' test(s) failed'); process.exit(1); }
 console.log('\nAll tests passed');

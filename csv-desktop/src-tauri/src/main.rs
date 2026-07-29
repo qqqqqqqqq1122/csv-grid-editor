@@ -19,6 +19,11 @@ const MAX_RECENT: usize = 8;
 struct AppState {
     sidecar_stdin: Arc<Mutex<Option<ChildStdin>>>,
     sidecar_child: Arc<Mutex<Option<Child>>>,
+    // Commands issued before the sidecar's stdin exists (node.exe is an ~86 MB
+    // binary — cold start can take seconds) are queued here and flushed as
+    // soon as the pipe is up. Without this the very first 'open' could be
+    // dropped silently and the window would sit empty.
+    outbox: Arc<Mutex<Vec<Value>>>,
     config: Arc<Mutex<Value>>,
     config_path: PathBuf,
     pending_file: Mutex<Option<String>>,
@@ -144,7 +149,19 @@ fn spawn_sidecar(app: &AppHandle) {
 
     let stdout = child.stdout.take().expect("sidecar stdout piped");
     let stdin = child.stdin.take().expect("sidecar stdin piped");
-    *state.sidecar_stdin.lock().unwrap() = Some(stdin);
+    // Flush any commands queued while node.exe was still starting.
+    {
+        let mut pending = state.outbox.lock().unwrap();
+        let mut stdin_opt = state.sidecar_stdin.lock().unwrap();
+        *stdin_opt = Some(stdin);
+        let stdin_ref = stdin_opt.as_mut().unwrap();
+        for msg in pending.drain(..) {
+            if let Ok(s) = serde_json::to_string(&msg) {
+                let _ = writeln!(stdin_ref, "{s}");
+            }
+        }
+        let _ = stdin_ref.flush();
+    }
 
     // stdout reader thread: one JSON object per line → forward to the frontend.
     // {type:'persist'} is intercepted — the Rust shell is the single writer
@@ -187,10 +204,16 @@ fn spawn_sidecar(app: &AppHandle) {
 fn send_to_sidecar(app: &AppHandle, value: &Value) {
     let state = app.state::<AppState>();
     let mut guard = state.sidecar_stdin.lock().unwrap();
-    if let Some(stdin) = guard.as_mut() {
-        if let Ok(s) = serde_json::to_string(value) {
-            let _ = writeln!(stdin, "{s}");
-            let _ = stdin.flush();
+    match guard.as_mut() {
+        Some(stdin) => {
+            if let Ok(s) = serde_json::to_string(value) {
+                let _ = writeln!(stdin, "{s}");
+                let _ = stdin.flush();
+            }
+        }
+        None => {
+            // Sidecar still starting (or crashed) — queue so nothing is lost.
+            state.outbox.lock().unwrap().push(value.clone());
         }
     }
 }
@@ -336,6 +359,7 @@ pub fn run() {
             app.manage(AppState {
                 sidecar_stdin: Arc::new(Mutex::new(None)),
                 sidecar_child: Arc::new(Mutex::new(None)),
+                outbox: Arc::new(Mutex::new(Vec::new())),
                 config: Arc::new(Mutex::new(config)),
                 config_path,
                 pending_file: Mutex::new(initial_file),

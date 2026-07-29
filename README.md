@@ -1,5 +1,6 @@
 ## Revision History
 
+- **2026-07-29 11:54:12** — Desktop: fixed the "empty UI" chain of bugs found by CDP-driven end-to-end debugging: (1) the `open-file` listener never opened the first file when the app launched fileless (menu-open regression); (2) `__TAURI__.invoke` moved to `__TAURI__.core.invoke` in Tauri v2; (3) Tauri v2 capabilities blocked `event.listen`/`event.emit` entirely — added `src-tauri/capabilities/default.json` granting `core:event:*`; (4) stale `sessionStorage` pending-file could outrank a fresh CLI arg; (5) commands sent during node.exe cold start were dropped — added an outbox queue in the Rust bridge. Also established the three-layer dev workflow (core tests / `tauri dev` + CDP inspect / release build) documented in [Desktop Edition (Tauri)](#desktop-edition-tauri), and **Releases v0.1.0–v0.1.2 are known-broken (empty UI)** — do not use them.
 - **2026-07-29 11:10:00** — Desktop v0.1.2: the sidecar's stderr now goes to `<config dir>/sidecar-stderr.log` instead of vanishing into the GUI void, so engine failures are diagnosable; verified the portable layout under paths containing spaces.
 - **2026-07-29 10:55:15** — Desktop v0.1.1: fixed sidecar spawn on portable installs — Tauri's `resource_dir()` returns a `\\?\`-prefixed verbatim path whose use as the child's working directory killed the sidecar instantly, and the previous fallback pointed at the compile-time build-machine path (os error 267). `sidecar_dir()` now resolves relative to the running exe (portable `sidecar/` folder, dev `../../../sidecar`, NSIS resource dir) with the UNC prefix stripped, and a spawn failure shows a native dialog naming the expected files instead of a console-only message.
 - **2026-07-29 10:22:29** — Added the **Tauri 2.0 desktop edition**: the repo is now a modular project with `csv-core/` (shared vscode-free engine: streaming parser, byte-offset index, large-file logic, `DocumentSession`, NDJSON sidecar) and `csv-desktop/` (Tauri Rust shell + Node.js sidecar + the extension's webview frontend reused verbatim via an IPCAdapter shim). The VS Code extension at the repo root is completely untouched. Windows x64 builds (NSIS installer + portable zip, .csv/.tsv file association) are produced by the `desktop-release` GitHub Actions workflow on `desktop-v*` tags. Details in [Desktop Edition (Tauri)](#desktop-edition-tauri).
@@ -487,12 +488,29 @@ Sidecar index cache and open-count bookkeeping live under
 
 ### Build & verify
 
+Development uses three layers — do NOT run `tauri build` during development:
+
 ```bash
-cd csv-core     && npm install && npm test          # 4 test files (incl. sidecar E2E)
-cd csv-desktop  && npm install && node build-frontend.mjs && node build-sidecar.mjs
-cd csv-desktop/src-tauri && cargo check
-cd csv-desktop  && npx tauri build                  # NSIS installer + exe
+# Layer 1 — core engine (seconds): parser / search / index / sidecar protocol
+cd csv-core && npm install && npm test
+
+# Layer 2 — desktop dev mode (a minute): UI + IPC + real file opening.
+# Hot-reloads the frontend from dist/; run once per Rust change.
+cd csv-desktop && npm install && npm run dev          # = build frontend+sidecar, then tauri dev
+
+# Debug the frontend for real: launch with WebView2 remote debugging and
+# dump live state (title, boot meta, grid row count, console exceptions):
+#   set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
+#   target\debug\csv-grid-editor-plus.exe path\to\file.csv
+#   node csv-desktop\test\cdp-inspect.cjs
+
+# Layer 3 — release acceptance only: installer / user env / packaged resources
+cd csv-desktop && npm run build                        # NSIS installer + exe
 ```
+
+Sidecar diagnostics: `%APPDATA%\com.okok909090.csvgrideditorplus\sidecar-stderr.log`.
+App config (theme, recent files, zoom): `%APPDATA%\com.okok909090.csvgrideditorplus\config.json`.
+Engine data (byte-offset index, open counts): `%APPDATA%\csv-grid-editor-plus\`.
 
 ### Packaging
 
@@ -787,12 +805,28 @@ Rust 层刻意保持极简：spawn `node.exe sidecar/main.js`、在 webview 与 
 
 ### 构建与验证
 
+开发使用三层流程——开发阶段**不要**跑 `tauri build`：
+
 ```bash
-cd csv-core     && npm install && npm test          # 4 个测试文件（含 sidecar 端到端）
-cd csv-desktop  && npm install && node build-frontend.mjs && node build-sidecar.mjs
-cd csv-desktop/src-tauri && cargo check
-cd csv-desktop  && npx tauri build                  # NSIS 安装包 + exe
+# 第一层 —— 核心引擎（秒级）：解析 / 搜索 / 索引 / sidecar 协议
+cd csv-core && npm install && npm test
+
+# 第二层 —— 桌面 dev 模式（约一分钟）：UI + IPC + 真实文件打开
+cd csv-desktop && npm install && npm run dev          # = 构建前端+sidecar，然后 tauri dev
+
+# 前端真机调试：WebView2 远程调试端口 + CDP 实时状态检查（标题、boot 元信息、
+# 网格行数、控制台异常）：
+#   set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
+#   target\debug\csv-grid-editor-plus.exe path\to\file.csv
+#   node csv-desktop\test\cdp-inspect.cjs
+
+# 第三层 —— 仅发布验收：安装 / 用户环境 / 打包资源
+cd csv-desktop && npm run build                        # NSIS 安装包 + exe
 ```
+
+Sidecar 诊断日志：`%APPDATA%\com.okok909090.csvgrideditorplus\sidecar-stderr.log`；应用配置（主题、最近文件、缩放）：同目录 `config.json`；引擎数据（字节索引、打开计数）：`%APPDATA%\csv-grid-editor-plus\`。
+
+> ⚠️ Releases 上的 v0.1.0–v0.1.2 桌面版存在"界面空白"缺陷（open-file 监听遗漏、`__TAURI__.core.invoke` 路径、Tauri 权限配置三重问题），请勿使用；修复后的版本见最新 Release。
 
 ### 打包
 

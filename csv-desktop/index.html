@@ -257,6 +257,7 @@
             __tauri.event.listen('open-file', (e) => {
                 sessionStorage.setItem('csv-pending-open', e.payload);
                 if (state.booted) location.reload();
+                else openPending(e.payload); // first file opened via menu/CLI — boot() already ran
             });
 
             __tauri.event.listen('theme-changed', (e) => applyTheme(e.payload));
@@ -299,7 +300,7 @@
 
             async function onExportData(msg) {
                 try {
-                    const written = await __tauri.invoke('save_export_file', {
+                    const written = await __tauri.core.invoke('save_export_file', {
                         filename: msg.filename, text: msg.text
                     });
                     setStatus(written ? ('Exported to ' + written) : 'Export cancelled');
@@ -334,21 +335,26 @@
                 document.title = meta.fileName + ' — CSV Grid Editor Plus';
             }
 
-            async function boot() {
-                try { state.config = await __tauri.invoke('get_config'); } catch { state.config = {}; }
-                applyTheme(state.config.themeResolved || 'dark');
-                // A file passed via CLI / file association may predate the
-                // 'open-file' listener — the shell holds it as pending.
-                if (!sessionStorage.getItem('csv-pending-open')) {
-                    try {
-                        const pending = await __tauri.invoke('get_pending_file');
-                        if (pending) sessionStorage.setItem('csv-pending-open', pending);
-                    } catch {}
-                }
-                const path = sessionStorage.getItem('csv-pending-open');
+            function openPending(path) {
                 if (path) {
                     __tauri.event.emit('host-cmd', { cmd: 'open', path: path, config: state.config });
-                } else {
+                    return true;
+                }
+                return false;
+            }
+
+            async function boot() {
+                try { state.config = await __tauri.core.invoke('get_config'); } catch { state.config = {}; }
+                applyTheme(state.config.themeResolved || 'dark');
+                // The shell's pending file (this launch's CLI arg / file
+                // association) is authoritative; sessionStorage is only the
+                // carrier for open-file reloads and is cleared once consumed
+                // so a stale file never wins a later launch.
+                let pending = null;
+                try { pending = await __tauri.core.invoke('get_pending_file'); } catch {}
+                const path = pending || sessionStorage.getItem('csv-pending-open');
+                sessionStorage.removeItem('csv-pending-open');
+                if (!openPending(path)) {
                     setStatus('Open a .csv file to begin (File → Open, or double-click a file)');
                     const overlay = document.getElementById('loading-overlay');
                     if (overlay) overlay.style.display = 'none';

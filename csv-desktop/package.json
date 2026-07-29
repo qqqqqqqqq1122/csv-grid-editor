@@ -6,9 +6,12 @@
   "license": "MIT",
   "scripts": {
     "build:frontend": "node build-frontend.mjs",
+    "build:sidecar": "node build-sidecar.mjs",
+    "prepare-dev": "node build-frontend.mjs && node build-sidecar.mjs",
     "tauri": "tauri",
-    "dev": "npm run build:frontend && tauri dev",
-    "build": "npm run build:frontend && tauri build"
+    "dev": "npm run prepare-dev && tauri dev",
+    "build": "npm run prepare-dev && tauri build",
+    "test": "node test/step010-frontend-assets.test.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
