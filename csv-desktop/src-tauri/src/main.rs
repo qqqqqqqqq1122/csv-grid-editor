@@ -61,16 +61,43 @@ fn resolved_theme(cfg: &Value, system_dark: bool) -> &'static str {
 
 // ── Sidecar lifecycle + NDJSON bridge ──
 
+
+// Strip the \\?\ verbatim prefix some Tauri path APIs return — it breaks
+// CreateProcess' working-directory handling for the sidecar spawn.
+fn strip_unc(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p
+    }
+}
+
 fn sidecar_dir(app: &AppHandle) -> PathBuf {
-    // Packaged: resources land next to the exe under resource_dir/sidecar.
+    // Installed (NSIS): resources land in the Tauri resource dir.
     if let Ok(dir) = app.path().resource_dir() {
-        let candidate = dir.join("sidecar");
+        let candidate = strip_unc(dir).join("sidecar");
         if candidate.join("main.js").exists() {
             return candidate;
         }
     }
-    // Dev: csv-desktop/sidecar relative to src-tauri.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar")
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = strip_unc(exe).parent().map(|p| p.to_path_buf()) {
+            // Portable zip layout: sidecar/ next to the exe.
+            let candidate = dir.join("sidecar");
+            if candidate.join("main.js").exists() {
+                return candidate;
+            }
+            // Dev layout: target/{debug,release}/exe → ../../../sidecar.
+            let dev = dir.join("../../../sidecar");
+            if dev.join("main.js").exists() {
+                return dev;
+            }
+            // Not found anywhere — return the portable location so the spawn
+            // error can name the directory the user must create.
+            return candidate;
+        }
+    }
+    PathBuf::from("sidecar")
 }
 
 fn spawn_sidecar(app: &AppHandle) {
@@ -89,7 +116,16 @@ fn spawn_sidecar(app: &AppHandle) {
     let mut child = match child {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("failed to spawn sidecar: {e}");
+            // No silent console-only failures: the app is useless without the
+            // engine, so say exactly what is missing and where.
+            app.dialog()
+                .message(format!(
+                    "Cannot start the CSV engine.\n\nExpected files:\n  {}\n  {}\n\nError: {e}\n\nIf you are using the portable version, keep the \"sidecar\" folder next to the exe.",
+                    dir.join("node.exe").display(),
+                    dir.join("main.js").display()
+                ))
+                .title("CSV Grid Editor Plus — sidecar missing")
+                .blocking_show();
             return;
         }
     };
