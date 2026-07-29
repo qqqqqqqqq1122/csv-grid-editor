@@ -67,6 +67,17 @@
     // via colDef.pinned in builder.ts and index-remapped on column insert/delete.
     // See features/freeze-columns.ts.
     pinnedCols: /* @__PURE__ */ new Set(),
+    // Fast-open streaming (Extension Host pumps the rest of a large file in
+    // background batches after the first screen has rendered). streamingActive
+    // is true while batches are still arriving; streamingDoc stays true for the
+    // document's lifetime so delimiter re-parse (which would re-split only the
+    // first-screen text in rawCsvText) stays disabled. See csvStream.ts.
+    streamingActive: false,
+    streamingDoc: false,
+    // Column global search. While true the grid shows the extension-side
+    // streamed match set instead of state.data, so all mutations (edit, delete,
+    // paste, replace) must stay off until "Show all rows" restores the view.
+    columnSearchActive: false,
     // Duplicate detection
     // dupRowSet — set of original 1-based row indices (i.e. _origIndex values) that
     // appear more than once. Empty set means dup detection is currently OFF.
@@ -83,6 +94,9 @@
       if (rows[i].length > max) max = rows[i].length;
     }
     return max;
+  }
+  function isGridEditable() {
+    return !IS_PREVIEW && !state.streamingActive && !state.columnSearchActive;
   }
 
   // src/webview/utils/csv.ts
@@ -1574,7 +1588,7 @@
     refreshRows(prevRows);
   }
   function replaceOne() {
-    if (state.findMatchIndex < 0 || IS_PREVIEW) return;
+    if (state.findMatchIndex < 0 || IS_PREVIEW || state.columnSearchActive || state.streamingActive) return;
     const needle = document.getElementById("find-input").value;
     const repl = document.getElementById("replace-input").value;
     const cs = isCaseSensitive();
@@ -1593,7 +1607,7 @@
     execFind();
   }
   function replaceAll() {
-    if (!state.findMatches.length || IS_PREVIEW) return;
+    if (!state.findMatches.length || IS_PREVIEW || state.columnSearchActive || state.streamingActive) return;
     const needle = document.getElementById("find-input").value;
     const repl = document.getElementById("replace-input").value;
     const cs = isCaseSensitive();
@@ -1645,7 +1659,8 @@
     "delim-dropdown",
     "col-chooser-popover",
     "goto-popover",
-    "rename-popover"
+    "rename-popover",
+    "colsearch-popover"
   ];
   function closeAllPopups(except) {
     for (const id of POPUP_IDS) {
@@ -1859,6 +1874,7 @@
   }
   function clearSelectedCells() {
     if (!state.gridApi || !selActive || IS_PREVIEW || IS_CHUNKED) return;
+    if (state.columnSearchActive || state.streamingActive) return;
     const cols = displayedColIds();
     const selCols = cols.filter((id) => selColIds.has(id));
     const rowMap = displayRowToOrig();
@@ -2317,7 +2333,9 @@
         headerClass: "col-type-" + colType,
         headerTooltip: TYPE_LABELS[colType] ?? "Text",
         minWidth: 60,
-        editable: !IS_PREVIEW,
+        // Callback (not a static flag) so editability follows the streaming
+        // and column-search state without a grid rebuild.
+        editable: () => isGridEditable(),
         sortable: true,
         filter: createCombinedFilter(colType),
         resizable: true,
@@ -2355,7 +2373,7 @@
       defaultColDef: {
         flex: 0,
         width: 130,
-        editable: !IS_PREVIEW,
+        editable: () => isGridEditable(),
         sortable: true,
         resizable: true,
         cellClassRules
@@ -2758,10 +2776,11 @@
     });
     document.querySelectorAll(".delim-option").forEach((opt) => {
       opt.addEventListener("click", () => {
+        dropdown.classList.add("hidden");
+        if (state.streamingDoc) return;
         const raw = opt.dataset.delim ?? ",";
         state.currentDelimiter = raw === "\\t" ? "	" : raw;
         updateDelimiterBadge(state.currentDelimiter);
-        dropdown.classList.add("hidden");
         const frozen = frozenRowPositions();
         state.data = parseCsv(state.rawCsvText, state.currentDelimiter);
         reanchorFrozenRows(frozen);
@@ -3136,7 +3155,7 @@
         menu.appendChild(sep);
       }
     }
-    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow) {
+    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow && !state.columnSearchActive) {
       const selectedRows = getSelectedRowDisplayIndices();
       const inSel = selectedRows.length > 1 && selectedRows.includes(rowIndex);
       const count = inSel ? selectedRows.length : 1;
@@ -3158,7 +3177,7 @@
       sep.className = "col-ctx-separator";
       menu.appendChild(sep);
     }
-    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow) {
+    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow && !state.columnSearchActive) {
       const selectedRows = getSelectedRowDisplayIndices();
       const rowIndices = selectedRows.length > 1 && selectedRows.includes(rowIndex) ? selectedRows : [rowIndex];
       const delRowItem = makeRowItem(rowIndices.length > 1 ? `Delete ${rowIndices.length} rows` : "Delete row", "codicon-trash", true);
@@ -3168,7 +3187,7 @@
       });
       menu.appendChild(delRowItem);
     }
-    if (colId && colId !== "row-index" && !IS_PREVIEW) {
+    if (colId && colId !== "row-index" && !IS_PREVIEW && !state.columnSearchActive) {
       const colIndex = parseInt(colId.replace("col_", ""), 10);
       const selectedCols = getSelectedColIndices();
       const useMulti = selectedCols.length > 1 && selectedCols.includes(colIndex);
@@ -3436,6 +3455,7 @@
     }
     if (state.isCellEditing) return false;
     if (IS_PREVIEW || IS_CHUNKED) return false;
+    if (state.columnSearchActive || state.streamingActive) return false;
     if (state.focusedCellRowIndex == null || state.focusedCellColId == null) return false;
     return true;
   }
@@ -3702,6 +3722,98 @@
     }, true);
   }
 
+  // src/webview/features/column-search.ts
+  var targetColIndex = -1;
+  function openSearchPopover(colIndex, anchor) {
+    targetColIndex = colIndex;
+    const popover = document.getElementById("colsearch-popover");
+    const label = document.getElementById("colsearch-label");
+    const input = document.getElementById("colsearch-input");
+    if (!popover || !input) return;
+    const colName = state.data[0]?.[colIndex] ?? `Column ${colIndex + 1}`;
+    if (label) label.textContent = `Search column "${colName}" (whole file)`;
+    input.value = "";
+    closeAllPopups("colsearch-popover");
+    popover.classList.remove("hidden");
+    if (anchor) {
+      const pw = popover.offsetWidth || 260;
+      popover.style.left = Math.max(4, Math.min(anchor.left, window.innerWidth - pw - 4)) + "px";
+      popover.style.top = anchor.bottom + 4 + "px";
+    }
+    setTimeout(() => input.focus(), 0);
+  }
+  function submitSearch() {
+    const input = document.getElementById("colsearch-input");
+    const query = input?.value ?? "";
+    document.getElementById("colsearch-popover")?.classList.add("hidden");
+    if (!query || targetColIndex < 0) return;
+    const colName = state.data[0]?.[targetColIndex] ?? `Column ${targetColIndex + 1}`;
+    const statusEl = document.getElementById("status");
+    if (statusEl) statusEl.textContent = `Searching column "${colName}" for "${query}"\u2026`;
+    vscodeApi.postMessage({
+      type: "columnSearch",
+      colIndex: targetColIndex,
+      colName,
+      query
+    });
+  }
+  function handleColumnSearchResults(msg) {
+    const statusEl = document.getElementById("status");
+    if (msg.error) {
+      if (statusEl) statusEl.textContent = "Column search failed: " + msg.error;
+      return;
+    }
+    const rows = msg.rows;
+    const origIndexes = msg.origIndexes;
+    const numCols = getNumCols(state.data);
+    const rowData = rows.map((row, i) => {
+      const obj = { _origIndex: origIndexes[i] };
+      for (let c = 0; c < numCols; c++) obj["col_" + c] = row[c] ?? "";
+      return obj;
+    });
+    state.columnSearchActive = true;
+    if (state.gridApi) {
+      state.gridApi.setGridOption("pinnedTopRowData", []);
+      state.gridApi.setGridOption("rowData", rowData);
+    }
+    const limit = Number(msg.limit) || 1e3;
+    const banner = document.getElementById("colsearch-banner");
+    const text = document.getElementById("colsearch-banner-text");
+    if (text) {
+      text.textContent = msg.truncated ? `Column "${msg.colName}" contains "${msg.query}" \u2014 showing first ${limit.toLocaleString()} matches (scanned ${Number(msg.scanned).toLocaleString()} rows)` : `Column "${msg.colName}" contains "${msg.query}" \u2014 ${rows.length.toLocaleString()} matches`;
+    }
+    banner?.classList.remove("hidden");
+    if (statusEl) {
+      statusEl.textContent = msg.truncated ? `${rows.length.toLocaleString()} matching records (first ${limit.toLocaleString()} shown)` : `${rows.length.toLocaleString()} matching records`;
+    }
+  }
+  function dismissColumnSearch() {
+    if (!state.columnSearchActive) return;
+    state.columnSearchActive = false;
+    document.getElementById("colsearch-banner")?.classList.add("hidden");
+    refreshGrid();
+  }
+  function setupColumnSearch() {
+    document.getElementById("col-ctx-search")?.addEventListener("click", (e) => {
+      const menu = document.getElementById("col-context-menu");
+      const colId = menu?.dataset.colId;
+      const rect = menu ? new DOMRect(menu.offsetLeft, menu.offsetTop, 0, 0) : null;
+      menu?.classList.add("hidden");
+      if (!colId) return;
+      openSearchPopover(parseInt(colId.replace("col_", ""), 10), rect);
+      e.stopPropagation();
+    });
+    document.getElementById("colsearch-ok")?.addEventListener("click", submitSearch);
+    document.getElementById("colsearch-cancel")?.addEventListener("click", () => {
+      document.getElementById("colsearch-popover")?.classList.add("hidden");
+    });
+    document.getElementById("colsearch-input")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submitSearch();
+    });
+    document.getElementById("colsearch-show-all")?.addEventListener("click", dismissColumnSearch);
+    document.getElementById("colsearch-dismiss")?.addEventListener("click", dismissColumnSearch);
+  }
+
   // src/webview/keyboard.ts
   function writeToClipboard(text) {
     if (navigator.clipboard?.writeText) {
@@ -3752,7 +3864,7 @@
   }
 
   // src/webview/messaging.ts
-  function initWithData(text, delimiter) {
+  function initWithData(text, delimiter, streaming) {
     state.rawCsvText = text;
     state.currentDelimiter = delimiter;
     state.data = parseCsv(text, delimiter);
@@ -3760,6 +3872,8 @@
     state.autoFitCache = null;
     state.autoFitCacheZoom = -1;
     state.zoomIndex = Math.max(0, Math.min(INITIAL_ZOOM_INDEX, state.ZOOM_STEPS.length - 1));
+    state.streamingActive = streaming;
+    state.streamingDoc = streaming;
     updateDelimiterBadge(delimiter);
     if (IS_PREVIEW) {
       const previewEl = document.getElementById("preview-text");
@@ -3779,11 +3893,36 @@
       hideLoader();
     }, 0);
   }
+  function handleAppendRows(rows) {
+    const startIdx = state.data.length;
+    for (const row of rows) state.data.push(row);
+    if (state.gridApi && !state.columnSearchActive) {
+      const add = rows.map((row, i) => {
+        const obj = { _origIndex: startIdx + i };
+        for (let c = 0; c < row.length; c++) obj["col_" + c] = row[c];
+        return obj;
+      });
+      state.gridApi.applyTransaction({ add });
+    }
+    const statusEl = document.getElementById("status");
+    if (statusEl) statusEl.textContent = `Loading\u2026 ${(state.data.length - 1).toLocaleString()} rows`;
+  }
   function setupMessaging() {
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (msg.type === "init") {
-        initWithData(msg.text, msg.delimiter);
+        initWithData(msg.text, msg.delimiter, !!msg.streaming);
+      } else if (msg.type === "appendRows") {
+        handleAppendRows(msg.rows);
+      } else if (msg.type === "streamDone") {
+        state.streamingActive = false;
+        updateCountsDisplay();
+      } else if (msg.type === "streamError") {
+        state.streamingActive = false;
+        const statusEl = document.getElementById("status");
+        if (statusEl) statusEl.textContent = "Background load failed \u2014 close and reopen the file to retry";
+      } else if (msg.type === "columnSearchResults") {
+        handleColumnSearchResults(msg);
       } else if (msg.type === "update") {
         const frozen = frozenRowPositions();
         state.data = parseCsv(msg.text, msg.delimiter);
@@ -3815,6 +3954,7 @@
   setupRenameColumn();
   setupColumnChooser();
   setupColorMode();
+  setupColumnSearch();
   setupKeyboard();
   setupMessaging();
   setupPopups();

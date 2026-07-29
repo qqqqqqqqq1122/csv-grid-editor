@@ -27,10 +27,14 @@ export function setupDelimiterBadge(): void {
 
     document.querySelectorAll<HTMLElement>('.delim-option').forEach(opt => {
         opt.addEventListener('click', () => {
+            dropdown.classList.add('hidden');
+            // Streamed documents hold only the first screen of text in
+            // rawCsvText — re-parsing it with a different delimiter would
+            // silently drop every row the background pump already appended.
+            if (state.streamingDoc) return;
             const raw = opt.dataset.delim ?? ',';
             state.currentDelimiter = raw === '\\t' ? '\t' : raw;
             updateDelimiterBadge(state.currentDelimiter);
-            dropdown.classList.add('hidden');
             // A different delimiter re-splits the same lines into different columns,
             // so the rows are the same rows at the same positions — re-anchor the
             // frozen rows across the re-parse instead of losing them.

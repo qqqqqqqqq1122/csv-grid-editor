@@ -2,7 +2,7 @@
   "name": "csv-grid-editor-plus",
   "displayName": "CSV Grid Editor Plus: CSV & TSV Viewer",
   "description": "Open, view and edit CSV and TSV files in a fast sortable filterable grid. Inline editing, find and replace, freeze rows, column stats, Excel copy and paste and export to JSON. Free.",
-  "version": "1.13.1",
+  "version": "1.15.0",
   "publisher": "okok909090",
   "license": "MIT",
   "icon": "icon.png",
@@ -65,6 +65,11 @@
         "command": "csvGridEditor.setLargeFileMode",
         "title": "Set Large File Mode (head / tail / all)",
         "category": "CSV Grid Editor"
+      },
+      {
+        "command": "csvGridEditor.buildByteOffsetIndex",
+        "title": "Accelerate Repeated Opening (Build Byte Offset Index)",
+        "category": "CSV Grid Editor"
       }
     ],
     "menus": {
@@ -73,6 +78,11 @@
           "command": "csvGridEditor.setLargeFileMode",
           "when": "resourceExtname == .csv || resourceExtname == .tsv",
           "group": "csvGridEditor@1"
+        },
+        {
+          "command": "csvGridEditor.buildByteOffsetIndex",
+          "when": "resourceExtname == .csv || resourceExtname == .tsv",
+          "group": "csvGridEditor@2"
         }
       ]
     },
@@ -96,6 +106,49 @@
           "default": 1000,
           "minimum": 1,
           "description": "Number of rows to display in head/tail preview mode."
+        },
+        "csvGridEditor.byteOffsetIndex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the optional byte-offset index cache (.csvidx) for repeated opening of large files. Index files are stored in the extension's global storage, never next to your CSVs."
+        },
+        "csvGridEditor.byteOffsetIndex.autoGenerate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically build the index in the background once the same file has been opened openThreshold times. First opens always use pure streaming with zero extra disk writes."
+        },
+        "csvGridEditor.byteOffsetIndex.openThreshold": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "description": "Number of times the same file must be opened before its byte-offset index is built automatically."
+        },
+        "csvGridEditor.byteOffsetIndex.allowManualBuild": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow building/rebuilding the index manually via the 'Accelerate Repeated Opening' command."
+        },
+        "csvGridEditor.byteOffsetIndex.maxEntries": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "description": "Maximum number of cached index files kept (LRU eviction beyond this)."
+        },
+        "csvGridEditor.byteOffsetIndex.maxAgeDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "description": "Indexes not used for this many days are deleted automatically."
+        },
+        "csvGridEditor.byteOffsetIndex.autoClean": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically prune the index cache on startup and after builds (LRU + max age)."
+        },
+        "csvGridEditor.byteOffsetIndex.verifyFingerprint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Additionally verify a content fingerprint (sha1 of size + first/last 64KB) before reusing an index, catching same-size same-mtime edits."
         }
       }
     }

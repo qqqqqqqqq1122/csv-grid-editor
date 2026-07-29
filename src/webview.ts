@@ -185,6 +185,26 @@ export function getWebviewContent(
         <div id="col-chooser-list" class="col-chooser-list"></div>
     </div>
 
+    <!-- Column global search popover -->
+    <div id="colsearch-popover" class="goto-popover hidden">
+        <label class="goto-label" for="colsearch-input" id="colsearch-label">Search column</label>
+        <div class="goto-input-row">
+            <input id="colsearch-input" type="text" spellcheck="false" placeholder="Keyword…">
+        </div>
+        <div class="goto-actions">
+            <button id="colsearch-cancel" class="goto-btn goto-btn-secondary">Cancel</button>
+            <button id="colsearch-ok"     class="goto-btn goto-btn-primary">Search</button>
+        </div>
+    </div>
+
+    <!-- Column global search result banner -->
+    <div id="colsearch-banner" class="dup-banner hidden">
+        <span class="dup-banner-icon"><i class="codicon codicon-search"></i></span>
+        <span id="colsearch-banner-text" class="dup-banner-text"></span>
+        <button id="colsearch-show-all" class="dup-banner-btn">Show all rows</button>
+        <button id="colsearch-dismiss"  class="dup-banner-btn dup-banner-btn-secondary">Dismiss</button>
+    </div>
+
     <!-- Duplicate banner -->
     <div id="dup-banner" class="dup-banner hidden">
         <span class="dup-banner-icon"><i class="codicon codicon-files"></i></span>
@@ -236,6 +256,8 @@ export function getWebviewContent(
         <div id="col-ctx-rename"   class="col-ctx-item"${isPreview ? ' style="display:none;"' : ''}><i class="codicon codicon-edit"></i><span class="col-ctx-label">Rename column</span></div>
         <div class="col-ctx-separator"${isPreview ? ' style="display:none;"' : ''}></div>
         <div id="col-ctx-select"   class="col-ctx-item"><i class="codicon codicon-list-selection"></i><span class="col-ctx-label">Select column</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-search"   class="col-ctx-item"><i class="codicon codicon-search"></i><span class="col-ctx-label">Search this column (whole file)…</span></div>
         <div class="col-ctx-separator"></div>
         <div id="col-ctx-freeze"   class="col-ctx-item"><i class="codicon codicon-pinned"></i><span class="col-ctx-label">Freeze column</span></div>
         <div id="col-ctx-unfreeze" class="col-ctx-item" style="display:none;"><i class="codicon codicon-pin"></i><span class="col-ctx-label">Unfreeze column</span></div>

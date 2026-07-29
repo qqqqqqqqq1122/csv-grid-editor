@@ -218,6 +218,8 @@ export function copySelection(withHeader = false): void {
 
 function clearSelectedCells(): void {
     if (!state.gridApi || !selActive || IS_PREVIEW || IS_CHUNKED) return;
+    // Search-result rows alias file positions; mid-stream clears would be lost.
+    if (state.columnSearchActive || state.streamingActive) return;
     const cols = displayedColIds();
     const selCols = cols.filter(id => selColIds.has(id));
     const rowMap = displayRowToOrig();

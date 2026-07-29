@@ -136,7 +136,9 @@ export function closeFindBar(): void {
 // ── replace ───────────────────────────────────────────────────────────────────
 
 function replaceOne(): void {
-    if (state.findMatchIndex < 0 || IS_PREVIEW) return;
+    // The column-search view's rows alias file positions, and a mid-stream
+    // replace would be dropped when the pump finishes — both must stay inert.
+    if (state.findMatchIndex < 0 || IS_PREVIEW || state.columnSearchActive || state.streamingActive) return;
     const needle = (document.getElementById('find-input') as HTMLInputElement).value;
     const repl   = (document.getElementById('replace-input') as HTMLInputElement).value;
     const cs     = isCaseSensitive();
@@ -157,7 +159,7 @@ function replaceOne(): void {
 }
 
 function replaceAll(): void {
-    if (!state.findMatches.length || IS_PREVIEW) return;
+    if (!state.findMatches.length || IS_PREVIEW || state.columnSearchActive || state.streamingActive) return;
     const needle = (document.getElementById('find-input') as HTMLInputElement).value;
     const repl   = (document.getElementById('replace-input') as HTMLInputElement).value;
     const cs     = isCaseSensitive();

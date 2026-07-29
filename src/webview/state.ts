@@ -56,6 +56,19 @@ export const state = {
     // See features/freeze-columns.ts.
     pinnedCols: new Set<number>(),
 
+    // Fast-open streaming (Extension Host pumps the rest of a large file in
+    // background batches after the first screen has rendered). streamingActive
+    // is true while batches are still arriving; streamingDoc stays true for the
+    // document's lifetime so delimiter re-parse (which would re-split only the
+    // first-screen text in rawCsvText) stays disabled. See csvStream.ts.
+    streamingActive: false,
+    streamingDoc: false,
+
+    // Column global search. While true the grid shows the extension-side
+    // streamed match set instead of state.data, so all mutations (edit, delete,
+    // paste, replace) must stay off until "Show all rows" restores the view.
+    columnSearchActive: false,
+
     // Duplicate detection
     // dupRowSet — set of original 1-based row indices (i.e. _origIndex values) that
     // appear more than once. Empty set means dup detection is currently OFF.
@@ -73,4 +86,12 @@ export function getNumCols(rows: CsvRow[]): number {
         if (rows[i].length > max) max = rows[i].length;
     }
     return max;
+}
+
+// Single source for whether a cell may be edited right now. False in preview
+// mode, while the background stream is still appending rows, and while the
+// column-search result view is up (its rows alias file positions, not
+// state.data positions). Used as AG Grid's `editable` callback in builder.ts.
+export function isGridEditable(): boolean {
+    return !IS_PREVIEW && !state.streamingActive && !state.columnSearchActive;
 }

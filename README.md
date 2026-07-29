@@ -1,5 +1,7 @@
 ## Revision History
 
+- **2026-07-29 09:07:55** — v1.15.0: added the optional **Byte Offset Index** cache layer on top of the (unchanged) chunk-streaming architecture. First opens stay pure streaming with zero extra disk writes; after the same large file is opened 3× (configurable) or via the new "Accelerate Repeated Opening" command, a background-built `.csvidx` (per-row 64-bit offsets, stored only in the extension's global storage, named by path hash) gives Paged View instant repeat opens. Reuse is guarded by size + mtime + content fingerprint; LRU cap (10) and 30-day stale cleanup run in the background. Details in [Local Modification: Byte Offset Index Cache](#local-modification-byte-offset-index-cache).
+- **2026-07-29 08:45:06** — v1.14.0: added **Fast Open (chunk streaming)** — large files opened in full render the header + first 200 records instantly, then the Extension Host streams the remaining records in background batches (quote-aware parser, in-memory only, zero disk cache) which the grid appends silently; and **Column Global Search** — right-click a column header → "Search this column (whole file)…" streams the entire file testing only that column, destroys the stream after 1,000 matches, and shows the matches with their source row numbers. Details in [Local Modification: Fast Open & Column Global Search](#local-modification-fast-open--column-global-search).
 - **2026-07-28 21:03:56** — Renamed the extension `name` from `csv-grid-editor` to `csv-grid-editor-plus` (display name "CSV Grid Editor Plus") because the Marketplace rejected the original name as already taken; badges updated to `okok909090.csv-grid-editor-plus`.
 - **2026-07-28 20:47:26** — Re-published the fork under a new identity: `publisher` changed from `RobinReiche` to `okok909090`, `repository` / `homepage` / `bugs` URLs point to `github.com/qqqqqqqqq1122/csv-grid-editor`, Marketplace badges updated to the new publisher, and a full Chinese translation (中文版) appended at the bottom of this README. Original author attribution (LICENSE, sponsor, Contact section) kept per MIT.
 - **2026-07-28 20:17:58** — Renamed the `largeFileMode` value `prompt` to `ask` (the "ask every time" option, i.e. the original interactive behavior), so the four user-settable values are now `ask` / `head` / `tail` / `all` with `ask` as the default. The legacy value `prompt` is still accepted and treated as `ask`.
@@ -304,6 +306,146 @@ manifest contributions and the head/tail/all/ask decision logic.
 
 ---
 
+## Local Modification: Fast Open & Column Global Search
+
+*(Local fork change, 2026-07-29, v1.14.0 — not part of upstream.)*
+
+### Fast Open (chunk streaming)
+
+Opening a large file (> 10 MB) in full (`all` mode, or "Open Full File" in `ask`
+mode) no longer waits for the whole file to load:
+
+1. **First screen in milliseconds** — `openCustomDocument` reads only the
+   header + first 200 records (quote-aware, so quoted newlines can't shift the
+   boundary) and the grid renders them immediately.
+2. **Background chunk streaming** — the Extension Host then streams the rest of
+   the file in ~4 MB read chunks through the same quote-aware state machine as
+   the webview parser, posting batches (5,000 rows or ~4 MB, whichever first)
+   with an event-loop yield between batches. Everything is in-memory: **no
+   `.idx` or any other disk cache file is ever created** (asserted by test).
+3. **Silent append** — the webview appends each batch to `state.data` and to AG
+   Grid via `applyTransaction({ add })`, so the full dataset materialises
+   without a re-parse or a scroll jump. The status bar shows `Loading… N rows`
+   until `streamDone`.
+
+Safety rails while the stream is in flight: cell editing, paste, clear-cells
+and replace are disabled, `edit` messages and external-change reloads are
+ignored, and `Ctrl+S` is refused with a warning — so a partially loaded file
+can never be written back. When the pump finishes, the accumulated raw chunk
+text becomes `document.content` (byte-identical to the file, covered by test),
+editing unlocks, and save/revert behave exactly like a normal full open. Two
+trade-offs: the delimiter can't be switched on streamed documents
+(`state.rawCsvText` only ever holds the first screen), and column type
+detection is computed from the first screen.
+
+### Column Global Search (stream + early truncation)
+
+Right-click a column header → **Search this column (whole file)…**, type a
+keyword, and the Extension Host streams the **entire** file — including rows
+the grid doesn't hold (head/tail previews, mid-stream state) — testing only
+that column with a case-insensitive contains match. The moment **1,000**
+matches have accumulated the loop breaks and `stream.destroy()` stops all
+further disk reads. The matched rows land in the grid with their **source file
+row numbers** in the `#` gutter, and a banner announces e.g. *"Column "city"
+contains "york" — showing first 1,000 matches (scanned 1,042 rows)"* with
+**Show all rows** restoring the untouched view. Mutations are disabled while
+the result view is up (its rows alias file positions, not `state.data`
+positions); a newer search or closing the panel invalidates an in-flight one
+via a generation counter.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\csvStream.ts` | **New.** vscode-free streaming engine: `RecordSplitter` (incremental quote-aware splitter, record boundaries tracked), `streamCsvRecords()` (async generator; destroying it destroys the read stream), `readFirstRecords()` (first N records + text cut at the exact record boundary), `searchColumnStream()` (single-column scan, early truncation at `COLUMN_SEARCH_LIMIT = 1000`). |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\csvEditorProvider.ts` | Large full opens read only the first screen (`readFirstRecords`) and mark the doc `isStreaming`; on webview `ready`, `pumpStream()` streams the remaining records as `appendRows` batches, accumulates the raw text into `document.content`, then sends `streamDone`. New `columnSearch` message handler (`runColumnSearch`, generation-guarded). Guards: `edit` ignored and save refused while streaming; file watcher skips reloads mid-stream; `dispose` cancels the pump and searches. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview.ts` | New HTML: `col-ctx-search` item in the column-header context menu, `colsearch-popover` (keyword input), `colsearch-banner` (result summary + Show all / Dismiss). Reuses existing `goto-popover` / `dup-banner` styles — no CSS changes needed. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview\messaging.ts` | Handles `appendRows` (push to `state.data` + `applyTransaction({add})`, suppressed from the grid while the search view is up), `streamDone` / `streamError`, `columnSearchResults`; `init` accepts `streaming: true` and sets `streamingActive` / `streamingDoc`. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview\features\column-search.ts` | **New.** Context-menu wiring, search popover, result rendering (matched rows keyed by source row number), banner, and restore via `refreshGrid()`. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview\state.ts` | New flags `streamingActive` / `streamingDoc` / `columnSearchActive` and the shared `isGridEditable()` predicate. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview\grid\builder.ts` | `editable` is now a callback (`() => isGridEditable()`) so editability follows streaming/search state without a rebuild. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\webview\features\delimiter.ts` / `paste.ts` / `find-replace.ts` / `range-select.ts` / `delete-row-col.ts` / `popups.ts` / `index.ts` | Mutation guards while streaming or in the search-result view; delimiter re-parse disabled for streamed docs; popover registered; feature wired up. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\test\step020-csv-stream.test.cjs` | **New test.** Parser parity with the webview's `parseCsv` (quotes, embedded newlines, CRLF, unicode, a quoted field spanning the 4 MB chunk boundary), first-screen boundary exactness, search targeting/truncation/early stream destroy, the fast-open contract (first screen + pump = full file, byte-for-byte), and zero disk residue. |
+
+### Verification
+
+`npx tsc -p ./` compiles cleanly, `npm run bundle` rebuilds the webview bundle,
+and `npm test` passes all 8 test files (6 pre-existing + `step010` + `step020`).
+
+---
+
+---
+
+## Local Modification: Byte Offset Index Cache
+
+*(Local fork change, 2026-07-29, v1.15.0 — not part of upstream.)*
+
+An **optional** index layer on top of the chunk-streaming architecture — the
+streaming, background parsing and virtual-append logic are completely
+untouched, and every index consumer falls back to streaming when no valid
+index exists.
+
+### Behaviour
+
+- **First opens: zero extra disk writes.** Opening any CSV uses the existing
+  streaming flow only — no index is created on open #1 (or #2).
+- **Automatic background build** once the same file has been opened
+  `openThreshold` times (default **3**, persisted across sessions), or
+  **manually** at any time via the command `CSV Grid Editor: Accelerate
+  Repeated Opening (Build Byte Offset Index)` (Command Palette, or right-click
+  in a CSV editor). Building never blocks opening, first render or input.
+- **Index contents**: the byte offset of every record start (64-bit,
+  quote-aware scan — embedded newlines in cells never shift offsets) plus the
+  file's size, mtime and a content fingerprint (sha1 of size + first/last
+  64 KB).
+- **Reuse / invalidation**: an index is reused only when size **and** mtime
+  match (plus fingerprint when `verifyFingerprint` is on). Any change → the
+  old index is ignored and rebuilt in the background.
+- **Random access**: Paged View (> 50 MB) loads its page offsets from the
+  index, so repeat opens skip the full-file scan entirely. Without an index it
+  uses the original scan — identical behaviour.
+- **Storage**: all `.csvidx` files live in the extension's global storage
+  directory (`globalStorageUri/byte-offset-index/`), named
+  `sha1(absolute file path).csvidx` — **never next to your CSVs**, so no Git
+  pollution and no hidden files in data directories.
+
+### Cache management (LRU)
+
+- At most **10** index files are kept (configurable) — least recently used are
+  evicted; every use bumps the recency stamp.
+- Indexes unused for **30 days** (configurable) are deleted even under the cap.
+- Cleanup runs in the background on activation and after each build.
+
+### Settings
+
+| Setting | Default | Effect |
+|---|---|---|
+| `csvGridEditor.byteOffsetIndex.enabled` | `true` | Master switch for the whole index layer |
+| `csvGridEditor.byteOffsetIndex.autoGenerate` | `true` | Build automatically at the repeat-open threshold |
+| `csvGridEditor.byteOffsetIndex.openThreshold` | `3` | Opens of the same file before auto-build |
+| `csvGridEditor.byteOffsetIndex.allowManualBuild` | `true` | Allow the manual build command |
+| `csvGridEditor.byteOffsetIndex.maxEntries` | `10` | LRU cap on cached indexes |
+| `csvGridEditor.byteOffsetIndex.maxAgeDays` | `30` | Delete indexes unused for this long |
+| `csvGridEditor.byteOffsetIndex.autoClean` | `true` | Prune on startup and after builds |
+| `csvGridEditor.byteOffsetIndex.verifyFingerprint` | `true` | Extra content check before reusing an index |
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\byteOffsetIndex.ts` | **New.** vscode-free index engine: byte-level quote-aware `buildIndexOffsets()` (64-bit record offsets, handles escaped quotes across 4 MB chunk boundaries), binary `writeIndex()` / validating `readIndex()` (size + mtime + fingerprint), cheap `computeFingerprint()`, and the LRU registry (`touchIndex` / `pruneIndexes`). Write-then-rename so a crash never leaves a truncated index. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\csvEditorProvider.ts` | New `RowPager` abstraction unifies the legacy scan-built page index and the index-backed per-record offsets — Paged View code paths are otherwise unchanged. `createPager()` prefers a valid index, falls back to the existing scan. `maybeBuildIndexOnRepeatOpen()` counts opens in `globalState` and builds in the background at the threshold (deduped, best-effort). New public `buildIndexForUri()` for the manual command. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\src\extension.ts` | Registers `csvGridEditor.buildByteOffsetIndex` and runs `pruneIndexes` in the background on activation. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\package.json` | New command (+ editor context-menu entry) and the 8 `byteOffsetIndex.*` settings. |
+| `G:\csv-grid-editor-master\csv-grid-editor-master\test\step030-byte-offset-index.test.cjs` | **New test.** Offset correctness vs the webview parser (quotes, CRLF, unicode), roundtrip reuse, staleness on size/mtime/fingerprint, garbage tolerance, LRU eviction, age cleanup, orphan handling, and proof the user's data dir never gains a file. |
+
+### Verification
+
+`npx tsc -p ./` compiles cleanly and `npm test` passes all 9 test files
+(6 pre-existing + `step010` + `step020` + `step030`).
+
+---
+
 # CSV Grid Editor（中文版）
 
 > 本项目 fork 自 [Robin-Reiche/csv-grid-editor](https://github.com/Robin-Reiche/csv-grid-editor)（MIT 许可证），由 okok909090 维护。本 fork 新增了「可配置大文件打开模式」，详见文末[本地修改说明](#本地修改可配置大文件打开模式)。
@@ -469,3 +611,90 @@ manifest contributions and the head/tail/all/ask decision logic.
 ## 许可证
 
 [MIT](LICENSE) — 原作者 Robin Reiche 的版权声明保留于 LICENSE 文件中。
+
+---
+
+## 本地修改：极致秒开 + 按列全局搜索
+
+*（本 fork 新增，2026-07-29，v1.14.0。）*
+
+### 极致秒开（分块流式加载）
+
+以完整模式打开大于 10 MB 的文件（`all` 模式，或 `ask` 模式下选"Open Full File"）不再需要等待全量加载：
+
+1. **首屏毫秒级渲染**——只读取表头 + 前 200 条记录（引号感知解析，单元格内的换行不会打乱边界）立即渲染。
+2. **后台分块流式加载**——Extension Host 以约 4 MB 为一块流式读取剩余内容，用与 Webview 端完全一致的引号感知状态机解析，按批（5,000 行或约 4 MB，先到先发）推送给前端，批间让出事件循环。**全程内存流，绝不生成 .idx 等任何磁盘缓存文件**（有测试断言）。
+3. **静默追加**——Webview 把每批数据追加到 `state.data` 并通过 `applyTransaction({ add })` 更新 AG Grid，状态栏显示 `Loading… N rows`，全量数据零感知加载完成。
+
+流式加载期间的安全护栏：单元格编辑、粘贴、清空单元格、替换全部禁用；`edit` 消息和外部变更重载被忽略；`Ctrl+S` 会被拒绝并提示——绝不会把未加载完的文件写回磁盘。泵送完成后，累积的原始文本成为 `document.content`（与原文件逐字节一致，有测试覆盖），编辑解锁，保存/还原与普通的完整打开完全一致。两个取舍：流式文档不能切换分隔符（`rawCsvText` 只保存首屏文本）；列类型检测基于首屏数据。
+
+### 按列全局搜索（流式 + 早期截断）
+
+右键列头 → **Search this column (whole file)…**，输入关键词后，Extension Host 流式扫描**整个文件**——包括网格当前没有持有的行（head/tail 预览、流式加载中途）——只检测目标列（大小写不敏感的包含匹配）。匹配累积到 **1,000** 条的瞬间立即中断循环、`stream.destroy()` 销毁文件流，不再读取后续磁盘内容。匹配行带回网格展示，`#` 行号列显示**源文件行号**，横幅提示如 *"Column "city" contains "york" — showing first 1,000 matches (scanned 1,042 rows)"*，点 **Show all rows** 恢复原视图。结果视图下所有变更操作禁用（这些行的编号是文件位置而非 `state.data` 位置）；发起新搜索或关闭面板会使进行中的搜索失效（代际计数器）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/csvStream.ts` | 新增。无 vscode 依赖的流式引擎：`RecordSplitter`（增量引号感知切分，记录边界追踪）、`streamCsvRecords()`（异步生成器，销毁即销毁文件流）、`readFirstRecords()`（前 N 条 + 在精确记录边界截断的文本）、`searchColumnStream()`（单列扫描，1,000 条早期截断） |
+| `src/csvEditorProvider.ts` | 大文件完整打开只读首屏；`ready` 后 `pumpStream()` 分批推送 `appendRows`、累积原文、结束发 `streamDone`；新增 `columnSearch` 消息处理；流式期间忽略 `edit`、拒绝保存、跳过外部重载；`dispose` 取消泵送和搜索 |
+| `src/webview.ts` | 新增 HTML：列头右键菜单项、搜索弹窗、结果横幅（复用现有样式，无 CSS 改动） |
+| `src/webview/messaging.ts` | 处理 `appendRows` / `streamDone` / `streamError` / `columnSearchResults`；`init` 支持 `streaming` 标记 |
+| `src/webview/features/column-search.ts` | 新增。搜索 UI 接线、结果渲染（按源文件行号）、横幅与恢复 |
+| `src/webview/state.ts` / `grid/builder.ts` | 新增状态标志与 `isGridEditable()`；`editable` 改为回调函数 |
+| 其余 webview features | 流式/搜索期间的变更守卫；流式文档禁用分隔符切换 |
+| `test/step020-csv-stream.test.cjs` | 新增测试：与 Webview 解析器逐字节一致（含跨 4 MB 块边界的引号字段）、首屏边界精确、搜索定向/截断/提前销流、秒开契约（首屏+泵送=完整文件）、零磁盘残留 |
+
+### 验证
+
+`npx tsc -p ./` 编译无错误，`npm run bundle` 重新打包 webview，`npm test` 全部 8 个测试文件通过。
+
+---
+
+## 本地修改：Byte Offset Index 字节偏移索引缓存
+
+*（本 fork 新增，2026-07-29，v1.15.0。）*
+
+在 chunk streaming 架构**完全不变**的前提下叠加的可选索引层——流式读取、后台解析、Virtual Append 逻辑零改动；索引不存在或失效时，所有消费方自动回退到现有流式流程。
+
+### 行为
+
+- **首次打开零额外磁盘写入**：打开任何 CSV 都走现有流式流程，第 1、2 次打开不生成任何索引。
+- **后台静默生成**：同一文件打开次数达到阈值（默认 **3** 次，跨会话计数）后自动后台构建；也可随时手动触发——命令面板或 CSV 编辑器右键菜单里的 `CSV Grid Editor: Accelerate Repeated Opening (Build Byte Offset Index)`。构建全程异步，绝不阻塞打开、首屏渲染或用户交互。
+- **索引内容**：每条记录起始位置的 64-bit 字节偏移（引号感知的字节级扫描，单元格内换行不会打乱偏移）+ 文件 size、mtime 和内容指纹（size + 首尾各 64KB 的 sha1）。
+- **复用与废弃**：仅当 size **且** mtime 一致（开启 `verifyFingerprint` 时再加上指纹）才复用；任何不一致 → 自动废弃并在后台重建。
+- **随机定位**：分页视图（>50MB）直接从索引加载页面偏移，重复打开**完全跳过全文件扫描**；无索引时走原有扫描，行为一致。
+- **存放位置**：所有 `.csvidx` 统一放在扩展全局缓存目录（`globalStorageUri/byte-offset-index/`），以 `sha1(文件绝对路径).csvidx` 命名——**绝不写入用户源码/数据目录**，零 Git 污染、零隐藏文件。
+
+### 缓存清理（LRU）
+
+- 最多保留 **10** 个索引（可配置），超出时自动驱逐最久未使用的；每次访问更新最近使用时间。
+- 超过 **30 天**（可配置）未使用的索引，即使未达数量上限也自动删除。
+- 清理在扩展激活时和每次构建后后台异步执行。
+
+### 设置项
+
+| 设置 | 默认值 | 作用 |
+|---|---|---|
+| `csvGridEditor.byteOffsetIndex.enabled` | `true` | 索引层总开关 |
+| `csvGridEditor.byteOffsetIndex.autoGenerate` | `true` | 达到重复打开阈值后自动构建 |
+| `csvGridEditor.byteOffsetIndex.openThreshold` | `3` | 同一文件打开多少次后自动构建 |
+| `csvGridEditor.byteOffsetIndex.allowManualBuild` | `true` | 允许手动构建命令 |
+| `csvGridEditor.byteOffsetIndex.maxEntries` | `10` | LRU 缓存数量上限 |
+| `csvGridEditor.byteOffsetIndex.maxAgeDays` | `30` | 超过该天数未使用自动删除 |
+| `csvGridEditor.byteOffsetIndex.autoClean` | `true` | 启动时和构建后自动清理 |
+| `csvGridEditor.byteOffsetIndex.verifyFingerprint` | `true` | 复用前额外校验内容指纹 |
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/byteOffsetIndex.ts` | 新增。无 vscode 依赖的索引引擎：字节级引号感知 `buildIndexOffsets()`、二进制 `writeIndex()` / 校验型 `readIndex()`、廉价指纹 `computeFingerprint()`、LRU 注册表（`touchIndex` / `pruneIndexes`）；先写临时文件再 rename，崩溃不留半截索引 |
+| `src/csvEditorProvider.ts` | 新增 `RowPager` 抽象统一"扫描分页索引"和"索引文件逐行偏移"两个来源，分页视图其余路径不变；`createPager()` 优先复用索引、回退现有扫描；`maybeBuildIndexOnRepeatOpen()` 在 globalState 计数并后台构建（去重、best-effort）；新增 `buildIndexForUri()` 供命令调用 |
+| `src/extension.ts` | 注册 `csvGridEditor.buildByteOffsetIndex` 命令；激活时后台执行 `pruneIndexes` |
+| `package.json` | 新增命令（含编辑器右键菜单入口）和 8 个 `byteOffsetIndex.*` 设置 |
+| `test/step030-byte-offset-index.test.cjs` | 新增测试：偏移与 webview 解析器逐条校验（引号/CRLF/Unicode）、往返复用、size/mtime/指纹三种失效、垃圾索引容错、LRU 驱逐、过期清理、孤儿处理、用户目录零污染 |
+
+### 验证
+
+`npx tsc -p ./` 编译无错误，`npm test` 全部 9 个测试文件通过。

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { CsvEditorProvider } from './csvEditorProvider';
 import { normalizeHeadRows } from './largeFileMode';
+import { pruneIndexes } from './byteOffsetIndex';
 
 const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MB — mirrors csvEditorProvider
 
@@ -60,11 +62,44 @@ async function setLargeFileMode(): Promise<void> {
     );
 }
 
+// Manual "Accelerate Repeated Opening": builds the byte-offset index for the
+// CSV in the active tab right away (works from the editor context menu too,
+// where VS Code passes the resource URI).
+async function buildByteOffsetIndex(uri?: vscode.Uri): Promise<void> {
+    const provider = CsvEditorProvider.current;
+    if (!provider) return;
+    let target = uri;
+    if (!target) {
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        if (tab && tab.input instanceof vscode.TabInputCustom
+            && tab.input.viewType === CsvEditorProvider.viewType) {
+            target = tab.input.uri;
+        }
+    }
+    if (!target) {
+        vscode.window.showInformationMessage('Open a CSV file first to build its byte offset index.');
+        return;
+    }
+    await provider.buildIndexForUri(target);
+}
+
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(CsvEditorProvider.register(context));
     context.subscriptions.push(
-        vscode.commands.registerCommand('csvGridEditor.setLargeFileMode', setLargeFileMode)
+        vscode.commands.registerCommand('csvGridEditor.setLargeFileMode', setLargeFileMode),
+        vscode.commands.registerCommand('csvGridEditor.buildByteOffsetIndex', buildByteOffsetIndex)
     );
+
+    // Background cache hygiene on startup: LRU cap + stale-age cleanup for
+    // .csvidx files. Fire-and-forget — never blocks activation.
+    const cfg = vscode.workspace.getConfiguration('csvGridEditor');
+    if (cfg.get<boolean>('byteOffsetIndex.enabled', true) && cfg.get<boolean>('byteOffsetIndex.autoClean', true)) {
+        const indexDir = path.join(context.globalStorageUri.fsPath, 'byte-offset-index');
+        void pruneIndexes(indexDir, {
+            maxEntries: cfg.get<number>('byteOffsetIndex.maxEntries', 10),
+            maxAgeDays: cfg.get<number>('byteOffsetIndex.maxAgeDays', 30)
+        }).catch(() => {});
+    }
 }
 
 export function deactivate() {}

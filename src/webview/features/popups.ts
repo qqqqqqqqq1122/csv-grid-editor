@@ -20,6 +20,7 @@ const POPUP_IDS = [
     'col-chooser-popover',
     'goto-popover',
     'rename-popover',
+    'colsearch-popover',
 ];
 
 // Hide every popup except the one about to be shown (pass its id as `except` to

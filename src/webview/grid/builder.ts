@@ -1,4 +1,4 @@
-import { state, getNumCols } from '../state';
+import { state, getNumCols, isGridEditable } from '../state';
 import { getColumnType, scheduleRecomputeColTypes } from './column-type';
 import { createCombinedFilter } from './filter';
 import { dataRowIndexForNode } from './row-mapping';
@@ -159,7 +159,9 @@ export function buildGrid(): void {
             headerClass:  'col-type-' + colType,
             headerTooltip: TYPE_LABELS[colType] ?? 'Text',
             minWidth: 60,
-            editable:     !IS_PREVIEW,
+            // Callback (not a static flag) so editability follows the streaming
+            // and column-search state without a grid rebuild.
+            editable:     () => isGridEditable(),
             sortable:     true,
             filter:       createCombinedFilter(colType),
             resizable:    true,
@@ -212,7 +214,7 @@ export function buildGrid(): void {
         pinnedTopRowData,
         defaultColDef: {
             flex: 0, width: 130,
-            editable: !IS_PREVIEW,
+            editable: () => isGridEditable(),
             sortable: true, resizable: true,
             cellClassRules,
         },

@@ -15,6 +15,8 @@ function shouldHandlePaste(target: EventTarget | null): boolean {
     }
     if (state.isCellEditing) return false;   // AG Grid's cell editor handles it
     if (IS_PREVIEW || IS_CHUNKED) return false;
+    // No pasting into the column-search result view or a still-streaming file.
+    if (state.columnSearchActive || state.streamingActive) return false;
     if (state.focusedCellRowIndex == null || state.focusedCellColId == null) return false;
     return true;
 }

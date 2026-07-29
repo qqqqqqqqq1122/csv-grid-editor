@@ -4,11 +4,16 @@ import * as path from 'path';
 import * as readline from 'readline';
 import { getWebviewContent } from './webview';
 import { planForLargeFile, normalizeHeadRows } from './largeFileMode';
+import { streamCsvRecords, readFirstRecords, searchColumnStream, COLUMN_SEARCH_LIMIT } from './csvStream';
+import { buildIndexOffsets, readIndex, writeIndex, pruneIndexes } from './byteOffsetIndex';
 
 const LARGE_FILE_THRESHOLD   = 10  * 1024 * 1024; // 10 MB
 const CHUNKED_THRESHOLD      = 50  * 1024 * 1024; // 50 MB
 const PREVIEW_ROW_COUNT      = 1000;
 const PAGE_SIZE              = 500;
+const FIRST_SCREEN_RECORDS   = 200;               // header + 200 data rows render instantly
+const APPEND_BATCH_ROWS      = 5000;              // rows per background append message
+const APPEND_BATCH_BYTES     = 4 * 1024 * 1024;   // …or ~4 MB of text, whichever comes first
 const CANCELLED_PREVIEW_MODE = '__cancelled__';
 
 interface RowPageIndex {
@@ -17,9 +22,63 @@ interface RowPageIndex {
     headerLine: string;
 }
 
+// Uniform random-access wrapper used by Paged View. Two backing shapes:
+//   - legacy pageIndex (per-PAGE offsets, built by scanning on every open)
+//   - byte-offset index (per-RECORD offsets loaded from the .csvidx cache,
+//     making repeat opens instant)
+// The rest of the provider doesn't care which one it got — the streaming
+// fallback and the index path share this interface (requirement: full
+// compatibility with the existing chunk-streaming flow).
+class RowPager {
+    private constructor(
+        public readonly headerLine: string,
+        private readonly pageOffsets: number[] | null,
+        private readonly rowOffsets: BigUint64Array | null,
+        public readonly totalRows: number
+    ) {}
+
+    static fromPageIndex(index: RowPageIndex): RowPager {
+        return new RowPager(index.headerLine, index.offsets, null, index.totalRows);
+    }
+
+    static fromRowOffsets(index: { offsets: BigUint64Array; totalRows: number; headerLine: string }): RowPager {
+        return new RowPager(index.headerLine, null, index.offsets, index.totalRows);
+    }
+
+    get totalPages(): number {
+        if (this.pageOffsets) return this.pageOffsets.length;
+        return Math.max(1, Math.ceil(this.totalRows / PAGE_SIZE));
+    }
+
+    // Byte range [start, end) of a page's data rows (end undefined = to EOF).
+    pageRange(pageNum: number): { start: number; end?: number } {
+        if (this.pageOffsets) {
+            return { start: this.pageOffsets[pageNum], end: this.pageOffsets[pageNum + 1] };
+        }
+        const offsets = this.rowOffsets!;
+        const firstRec = pageNum * PAGE_SIZE + 1; // record 0 is the header
+        const start = Number(offsets[Math.min(firstRec, offsets.length - 1)]);
+        const endRec = firstRec + PAGE_SIZE;
+        const end = endRec < offsets.length ? Number(offsets[endRec]) : undefined;
+        return { start, end };
+    }
+}
+
 class CsvDocument implements vscode.CustomDocument {
     public content: string;
-    public pageIndex: RowPageIndex | null = null;
+    public pager: RowPager | null = null;
+
+    // Fast-open streaming state (see csvStream.ts). isStreaming marks a large
+    // file opened with only its first screen of records in `content`; the rest
+    // is pumped to the webview in background batches. streamComplete flips when
+    // the pump finishes AND `content` has been replaced by the full file text —
+    // until then edits and saves are refused so a partial file is never written.
+    public isStreaming: boolean = false;
+    public streamComplete: boolean = false;
+    public streamCancelled: boolean = false;
+    // Generation counter for column-search requests; a stale search (a newer one
+    // was issued, or the panel was closed) never posts results.
+    public searchGen: number = 0;
 
     constructor(
         public readonly uri: vscode.Uri,
@@ -33,12 +92,19 @@ class CsvDocument implements vscode.CustomDocument {
         this.content = content;
     }
 
-    dispose(): void {}
+    dispose(): void {
+        this.streamCancelled = true;
+        this.searchGen++;
+    }
 }
 
 export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocument> {
 
     public static readonly viewType = 'csvViewer.grid';
+
+    // The most recently registered provider — lets the command in extension.ts
+    // reach instance services (manual index build).
+    public static current: CsvEditorProvider | null = null;
 
     private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<vscode.CustomDocumentContentChangeEvent<CsvDocument>>();
     public readonly onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
@@ -46,14 +112,22 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
     private readonly _webviews = new Map<string, vscode.WebviewPanel>();
 
     public static register(context: vscode.ExtensionContext): vscode.Disposable {
+        CsvEditorProvider.current = new CsvEditorProvider(context);
         return vscode.window.registerCustomEditorProvider(
             CsvEditorProvider.viewType,
-            new CsvEditorProvider(context),
+            CsvEditorProvider.current,
             { webviewOptions: { retainContextWhenHidden: true } }
         );
     }
 
-    constructor(private readonly context: vscode.ExtensionContext) {}
+    private readonly indexDir: string;
+    private readonly indexBuildsInFlight = new Set<string>();
+
+    constructor(private readonly context: vscode.ExtensionContext) {
+        // All .csvidx cache files live under global storage — never next to
+        // the user's CSVs (no Git pollution, no hidden files in data dirs).
+        this.indexDir = path.join(context.globalStorageUri.fsPath, 'byte-offset-index');
+    }
 
     // ── Document lifecycle ──
 
@@ -70,6 +144,7 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
         let previewMode = 'full';
         let totalLineCount = 0;
         let isChunked = false;
+        let isStreaming = false;
 
         if (fileSize > LARGE_FILE_THRESHOLD) {
             const config = vscode.workspace.getConfiguration('csvGridEditor');
@@ -149,8 +224,15 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
                 isPreview = true;
                 // content stays empty — pages are served on demand
             } else {
-                const raw = await vscode.workspace.fs.readFile(uri);
-                content = new TextDecoder().decode(raw);
+                // Full load of a large file → fast open. Read ONLY the header
+                // plus the first FIRST_SCREEN_RECORDS data records (quote-aware,
+                // so quoted newlines can't shift the boundary) and hand that to
+                // the webview for an instant first render; resolveCustomEditor
+                // then streams the remaining records in background batches.
+                const delimGuess = this.detectDelimiter(uri.fsPath, await this.readFirstLines(filePath, 1));
+                const first = await readFirstRecords(filePath, FIRST_SCREEN_RECORDS + 1, delimGuess);
+                content = first.text;
+                isStreaming = true;
             }
         } else {
             const raw = await vscode.workspace.fs.readFile(uri);
@@ -159,9 +241,20 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
 
         const delimiter = this.detectDelimiter(uri.fsPath, content);
         const doc = new CsvDocument(uri, content, delimiter, isPreview, previewMode, totalLineCount, isChunked);
+        doc.isStreaming = isStreaming;
 
         if (isChunked) {
-            doc.pageIndex = await this.buildPageIndex(uri.fsPath, PAGE_SIZE);
+            // Paged View: reuse the byte-offset index when valid (instant —
+            // no full scan), otherwise fall back to the existing scan-based
+            // page index. Identical paging behaviour either way.
+            doc.pager = await this.createPager(uri.fsPath);
+        }
+
+        // Repeat-open bookkeeping: only after the same file has been opened
+        // `openThreshold` times does a background index build kick in. The
+        // first opens stay pure chunk-streaming with zero extra disk writes.
+        if (fileSize > LARGE_FILE_THRESHOLD) {
+            this.maybeBuildIndexOnRepeatOpen(uri.fsPath, delimiter);
         }
 
         return doc;
@@ -212,6 +305,10 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
             );
             watcher.onDidChange(async () => {
                 try {
+                    // A reload mid-stream would race the background pump — the
+                    // webview holds only a prefix of the file. Skipping is safe:
+                    // the pump is reading the current on-disk bytes anyway.
+                    if (document.isStreaming && !document.streamComplete) return;
                     const raw = await vscode.workspace.fs.readFile(document.uri);
                     const text = new TextDecoder().decode(raw);
                     // Ignore our own writes. saveCustomDocument writes document.content
@@ -234,8 +331,8 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
 
         webviewPanel.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === 'ready') {
-                if (document.isChunked && document.pageIndex) {
-                    const pageText = await this.readPage(document.uri.fsPath, document.pageIndex, 0);
+                if (document.isChunked && document.pager) {
+                    const pageText = await this.readPage(document.uri.fsPath, document.pager, 0);
                     webviewPanel.webview.postMessage({
                         type: 'init',
                         text: pageText,
@@ -244,9 +341,19 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
                     webviewPanel.webview.postMessage({
                         type: 'pageData',
                         pageNumber: 0,
-                        totalPages: document.pageIndex.offsets.length,
+                        totalPages: document.pager.totalPages,
                         text: pageText
                     });
+                } else if (document.isStreaming) {
+                    // Fast open: the document only holds the first screen of
+                    // records. Render it immediately, then pump the rest.
+                    webviewPanel.webview.postMessage({
+                        type: 'init',
+                        text: document.content,
+                        delimiter: document.delimiter,
+                        streaming: true
+                    });
+                    void this.pumpStream(document, webviewPanel);
                 } else {
                     webviewPanel.webview.postMessage({
                         type: 'init',
@@ -261,8 +368,19 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
                 this.context.globalState.update('csvGridEditor.colorMode', msg.colorMode);
 
             } else if (msg.type === 'edit' && !document.isPreview) {
+                // Ignore edits until the background stream has finished — the
+                // webview would serialize only the loaded prefix and truncate
+                // the file on save. Cell editing is disabled webview-side too.
+                if (document.isStreaming && !document.streamComplete) return;
                 document.content = msg.text;
                 this._onDidChangeCustomDocument.fire({ document });
+
+            // Column global search (stream + early truncation, see csvStream.ts).
+            // The webview sends the target column and keyword; the whole file is
+            // scanned via a quote-aware record stream that is destroyed the
+            // moment COLUMN_SEARCH_LIMIT matches have accumulated.
+            } else if (msg.type === 'columnSearch') {
+                void this.runColumnSearch(document, webviewPanel, msg.colIndex, msg.query, msg.colName);
 
             // F4: Export handler — the webview sends the converted text plus a
             // suggested filename; the extension picks dialog filters from its
@@ -285,12 +403,12 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
                 }
 
             // F7: Chunked paging
-            } else if (msg.type === 'requestPage' && document.isChunked && document.pageIndex) {
-                const totalPages = document.pageIndex.offsets.length;
+            } else if (msg.type === 'requestPage' && document.isChunked && document.pager) {
+                const totalPages = document.pager.totalPages;
                 let pageNum = msg.pageNumber as number;
                 if (pageNum < 0) pageNum = totalPages - 1;
                 pageNum = Math.max(0, Math.min(pageNum, totalPages - 1));
-                const pageText = await this.readPage(document.uri.fsPath, document.pageIndex, pageNum);
+                const pageText = await this.readPage(document.uri.fsPath, document.pager, pageNum);
                 webviewPanel.webview.postMessage({
                     type: 'pageData',
                     pageNumber: pageNum,
@@ -306,6 +424,10 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
     async saveCustomDocument(document: CsvDocument, _cancellation: vscode.CancellationToken): Promise<void> {
         if (document.isPreview) {
             vscode.window.showWarningMessage('Cannot save in preview mode. Open the full file to edit.');
+            return;
+        }
+        if (document.isStreaming && !document.streamComplete) {
+            vscode.window.showWarningMessage('Still loading the file in the background — try saving again in a moment.');
             return;
         }
         await vscode.workspace.fs.writeFile(document.uri, new TextEncoder().encode(document.content));
@@ -337,6 +459,103 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
                 try { await vscode.workspace.fs.delete(context.destination); } catch {}
             }
         };
+    }
+
+    // ── Fast-open background pump ──
+
+    // Streams the records AFTER the already-rendered first screen to the
+    // webview in batches. The webview appends them to AG Grid silently, so the
+    // user perceives an instant open with the rest of the data flowing in.
+    // While pumping, the raw chunk text is accumulated into document.content,
+    // so once streamComplete flips the document holds the full file verbatim
+    // and save/revert behave exactly like a normal full open.
+    private async pumpStream(document: CsvDocument, webviewPanel: vscode.WebviewPanel): Promise<void> {
+        const filePath = document.uri.fsPath;
+        // The pump re-reads the file from byte 0 (skipping the first-screen
+        // RECORDS, not bytes), so the raw chunks accumulate the complete file
+        // text on their own — the first-screen text must NOT be prepended here.
+        const parts: string[] = [];
+        let batch: string[][] = [];
+        let batchBytes = 0;
+
+        const flush = async (): Promise<void> => {
+            if (batch.length === 0) return;
+            const rows = batch;
+            batch = [];
+            batchBytes = 0;
+            try {
+                await webviewPanel.webview.postMessage({ type: 'appendRows', rows });
+            } catch { document.streamCancelled = true; }
+            // Yield the event loop between batches so the extension host stays
+            // responsive for other extensions and UI messages.
+            await new Promise(resolve => setImmediate(resolve));
+        };
+
+        try {
+            for await (const record of streamCsvRecords(filePath, document.delimiter, {
+                skipRecords: FIRST_SCREEN_RECORDS + 1,
+                onChunkText: (t) => { parts.push(t); },
+                shouldStop: () => document.streamCancelled
+            })) {
+                batch.push(record);
+                batchBytes += record.join(document.delimiter).length + 1;
+                if (batch.length >= APPEND_BATCH_ROWS || batchBytes >= APPEND_BATCH_BYTES) {
+                    await flush();
+                    if (document.streamCancelled) return;
+                }
+            }
+            await flush();
+        } catch {
+            // A failed pump must not wedge the document in a half-loaded state.
+            try { await webviewPanel.webview.postMessage({ type: 'streamError' }); } catch {}
+            return;
+        }
+
+        if (document.streamCancelled) return;
+
+        document.content = parts.join('');
+        document.streamComplete = true;
+        try {
+            await webviewPanel.webview.postMessage({ type: 'streamDone' });
+        } catch {}
+    }
+
+    // ── Column global search (stream + early truncation) ──
+
+    private async runColumnSearch(
+        document: CsvDocument,
+        webviewPanel: vscode.WebviewPanel,
+        colIndex: number,
+        query: string,
+        colName: string
+    ): Promise<void> {
+        if (typeof colIndex !== 'number' || colIndex < 0 || !query) return;
+        const gen = ++document.searchGen; // invalidate any previous in-flight search
+        try {
+            const result = await searchColumnStream(
+                document.uri.fsPath, document.delimiter, colIndex, query, COLUMN_SEARCH_LIMIT
+            );
+            if (gen !== document.searchGen) return; // superseded or panel closed
+            await webviewPanel.webview.postMessage({
+                type: 'columnSearchResults',
+                colIndex,
+                colName,
+                query,
+                rows: result.rows,
+                origIndexes: result.origIndexes,
+                truncated: result.truncated,
+                scanned: result.scanned,
+                limit: COLUMN_SEARCH_LIMIT
+            });
+        } catch (err) {
+            if (gen !== document.searchGen) return;
+            try {
+                await webviewPanel.webview.postMessage({
+                    type: 'columnSearchResults',
+                    error: String(err)
+                });
+            } catch {}
+        }
     }
 
     // ── File reading helpers ──
@@ -447,9 +666,8 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
         });
     }
 
-    private async readPage(filePath: string, index: RowPageIndex, pageNum: number): Promise<string> {
-        const startOffset = index.offsets[pageNum];
-        const endOffset   = index.offsets[pageNum + 1]; // undefined = read to EOF
+    private async readPage(filePath: string, pager: RowPager, pageNum: number): Promise<string> {
+        const { start: startOffset, end: endOffset } = pager.pageRange(pageNum);
 
         return new Promise((resolve, reject) => {
             const streamOpts: { start: number; end?: number; encoding: BufferEncoding } = {
@@ -465,10 +683,102 @@ export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocumen
             stream.on('data', (chunk: string | Buffer) => { raw += typeof chunk === 'string' ? chunk : chunk.toString('utf8'); });
             stream.on('end', () => {
                 const lines = raw.split('\n').filter(l => l.trim() !== '');
-                resolve([index.headerLine, ...lines].join('\n'));
+                resolve([pager.headerLine, ...lines].join('\n'));
             });
             stream.on('error', reject);
         });
+    }
+
+    // ── Byte Offset Index (optional cache layer, see byteOffsetIndex.ts) ──
+
+    // Paged View pager: byte-offset index when a valid one exists, legacy
+    // scan-built page index otherwise. Same paging either way.
+    private async createPager(filePath: string): Promise<RowPager> {
+        const cfg = vscode.workspace.getConfiguration('csvGridEditor');
+        if (cfg.get<boolean>('byteOffsetIndex.enabled', true)) {
+            try {
+                const stat = await fs.promises.stat(filePath);
+                const idx = await readIndex(
+                    this.indexDir, filePath,
+                    { size: stat.size, mtimeMs: stat.mtimeMs },
+                    cfg.get<boolean>('byteOffsetIndex.verifyFingerprint', true)
+                );
+                if (idx) return RowPager.fromRowOffsets(idx);
+            } catch { /* fall through to the streaming scan */ }
+        }
+        return RowPager.fromPageIndex(await this.buildPageIndex(filePath, PAGE_SIZE));
+    }
+
+    // Counts opens per file (persisted in globalState) and, once the same file
+    // hits the configured threshold, builds its byte-offset index in the
+    // background. Never blocks opening; never writes anything on first opens.
+    private maybeBuildIndexOnRepeatOpen(filePath: string, delimiter: string): void {
+        const cfg = vscode.workspace.getConfiguration('csvGridEditor');
+        if (!cfg.get<boolean>('byteOffsetIndex.enabled', true)) return;
+        if (!cfg.get<boolean>('byteOffsetIndex.autoGenerate', true)) return;
+        const threshold = Math.max(2, cfg.get<number>('byteOffsetIndex.openThreshold', 3));
+
+        const counts = this.context.globalState.get<Record<string, number>>('csvGridEditor.openCounts', {});
+        const count = (counts[filePath] ?? 0) + 1;
+        counts[filePath] = count;
+        const keys = Object.keys(counts);
+        if (keys.length > 200) delete counts[keys[0]]; // keep the map bounded
+        void this.context.globalState.update('csvGridEditor.openCounts', counts);
+
+        if (count < threshold) return;
+        if (this.indexBuildsInFlight.has(filePath)) return;
+        this.indexBuildsInFlight.add(filePath);
+        void (async () => {
+            try {
+                const stat = await fs.promises.stat(filePath);
+                // A still-valid index may already exist from an earlier build.
+                const existing = await readIndex(
+                    this.indexDir, filePath,
+                    { size: stat.size, mtimeMs: stat.mtimeMs },
+                    cfg.get<boolean>('byteOffsetIndex.verifyFingerprint', true)
+                );
+                if (!existing) {
+                    const data = await buildIndexOffsets(filePath, delimiter);
+                    await writeIndex(this.indexDir, filePath, delimiter, data, { size: stat.size, mtimeMs: stat.mtimeMs });
+                    if (cfg.get<boolean>('byteOffsetIndex.autoClean', true)) {
+                        await pruneIndexes(this.indexDir, {
+                            maxEntries: cfg.get<number>('byteOffsetIndex.maxEntries', 10),
+                            maxAgeDays: cfg.get<number>('byteOffsetIndex.maxAgeDays', 30)
+                        });
+                    }
+                }
+            } catch { /* index building is strictly best-effort */ }
+            finally { this.indexBuildsInFlight.delete(filePath); }
+        })();
+    }
+
+    // Manual "Accelerate Repeated Opening": builds (or rebuilds) the index for
+    // the given file right away, regardless of the open-count threshold.
+    public async buildIndexForUri(uri: vscode.Uri): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration('csvGridEditor');
+        if (!cfg.get<boolean>('byteOffsetIndex.enabled', true)) {
+            vscode.window.showInformationMessage('Byte offset cache is disabled (csvGridEditor.byteOffsetIndex.enabled).');
+            return;
+        }
+        if (!cfg.get<boolean>('byteOffsetIndex.allowManualBuild', true)) {
+            vscode.window.showWarningMessage('Manual index building is disabled (csvGridEditor.byteOffsetIndex.allowManualBuild).');
+            return;
+        }
+        const filePath = uri.fsPath;
+        try {
+            const stat = await fs.promises.stat(filePath);
+            const delimiter = this.detectDelimiter(filePath, await this.readFirstLines(filePath, 1));
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Building byte offset index…', cancellable: false },
+                async () => {
+                    const data = await buildIndexOffsets(filePath, delimiter);
+                    await writeIndex(this.indexDir, filePath, delimiter, data, { size: stat.size, mtimeMs: stat.mtimeMs });
+                }
+            );
+            vscode.window.showInformationMessage('Byte offset index ready — repeated opens of this file will be faster.');
+        } catch (err) {
+            vscode.window.showErrorMessage(`Failed to build byte offset index: ${String(err)}`);
+        }
     }
 
     // ── Delimiter detection ──

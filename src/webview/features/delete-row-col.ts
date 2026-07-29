@@ -279,7 +279,9 @@ function showContextMenu(x: number, y: number, rowIndex: number | null, colId: s
     }
 
     // ── Insert row(s) above/below ─────────────────────────────────────────────
-    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow) {
+    // Mutations stay off while the column-search result view is up: its rows
+    // alias source-file positions, not state.data positions.
+    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow && !state.columnSearchActive) {
         // If the clicked row is inside a multi-row selection, insert that many
         // rows (Excel/Sheets behaviour) anchored to the selection edge — top for
         // "above", bottom for "below" — not the clicked row.
@@ -309,7 +311,7 @@ function showContextMenu(x: number, y: number, rowIndex: number | null, colId: s
     }
 
     // ── Delete row(s) ─────────────────────────────────────────────────────────
-    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow) {
+    if (rowIndex !== null && !IS_PREVIEW && !isPinnedRow && !state.columnSearchActive) {
         // Use the hand-rolled gutter selection (shift-click / drag), not AG Grid's
         // native getSelectedNodes() — rowSelection is never enabled, so that was
         // always empty and "Delete N rows" could never trigger. If the right-clicked
@@ -328,7 +330,7 @@ function showContextMenu(x: number, y: number, rowIndex: number | null, colId: s
     }
 
     // ── Delete column(s) ──────────────────────────────────────────────────────
-    if (colId && colId !== 'row-index' && !IS_PREVIEW) {
+    if (colId && colId !== 'row-index' && !IS_PREVIEW && !state.columnSearchActive) {
         const colIndex = parseInt(colId.replace('col_', ''), 10);
         const selectedCols = getSelectedColIndices();
         const useMulti = selectedCols.length > 1 && selectedCols.includes(colIndex);
