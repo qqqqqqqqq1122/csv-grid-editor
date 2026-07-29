@@ -78,31 +78,31 @@ fn strip_unc(p: PathBuf) -> PathBuf {
 }
 
 fn sidecar_dir(app: &AppHandle) -> PathBuf {
-    // Installed (NSIS): resources land in the Tauri resource dir.
+    let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = app.path().resource_dir() {
-        let candidate = strip_unc(dir).join("sidecar");
-        if candidate.join("main.js").exists() {
-            return candidate;
-        }
+        let dir = strip_unc(dir);
+        // NSIS payload resources live in the `_up_` subdirectory next to the
+        // exe, and resource_dir does not always point at it — try both.
+        candidates.push(dir.join("sidecar"));
+        candidates.push(dir.join("_up_").join("sidecar"));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = strip_unc(exe).parent().map(|p| p.to_path_buf()) {
             // Portable zip layout: sidecar/ next to the exe.
-            let candidate = dir.join("sidecar");
-            if candidate.join("main.js").exists() {
-                return candidate;
-            }
+            candidates.push(dir.join("sidecar"));
+            candidates.push(dir.join("_up_").join("sidecar"));
             // Dev layout: target/{debug,release}/exe → ../../../sidecar.
-            let dev = dir.join("../../../sidecar");
-            if dev.join("main.js").exists() {
-                return dev;
-            }
-            // Not found anywhere — return the portable location so the spawn
-            // error can name the directory the user must create.
-            return candidate;
+            candidates.push(dir.join("../../../sidecar"));
         }
     }
-    PathBuf::from("sidecar")
+    for candidate in &candidates {
+        if candidate.join("main.js").exists() {
+            return candidate.clone();
+        }
+    }
+    // Not found anywhere — return the first exe-relative location so the
+    // spawn error can name the directory the user must create.
+    candidates.into_iter().nth(2).unwrap_or_else(|| PathBuf::from("sidecar"))
 }
 
 fn spawn_sidecar(app: &AppHandle) {

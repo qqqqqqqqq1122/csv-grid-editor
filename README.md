@@ -1,5 +1,7 @@
 ## Revision History
 
+- **2026-07-29 12:59:20** — Branding & support: added the headline "世界上打开 CSV 文件最快的软件 · The Fastest CSV Opener on Earth" and a prominent "如果你觉得好用，Buy Me a Coffee" section with the Alipay QR code (images/alipay-qr.jpg); the QR image is also shipped inside the desktop portable zip. Extension bumped to v1.15.1 (README-only), desktop to v0.1.3.
+
 - **2026-07-29 11:54:12** — Desktop: fixed the "empty UI" chain of bugs found by CDP-driven end-to-end debugging: (1) the `open-file` listener never opened the first file when the app launched fileless (menu-open regression); (2) `__TAURI__.invoke` moved to `__TAURI__.core.invoke` in Tauri v2; (3) Tauri v2 capabilities blocked `event.listen`/`event.emit` entirely — added `src-tauri/capabilities/default.json` granting `core:event:*`; (4) stale `sessionStorage` pending-file could outrank a fresh CLI arg; (5) commands sent during node.exe cold start were dropped — added an outbox queue in the Rust bridge. Also established the three-layer dev workflow (core tests / `tauri dev` + CDP inspect / release build) documented in [Desktop Edition (Tauri)](#desktop-edition-tauri), and **Releases v0.1.0–v0.1.2 are known-broken (empty UI)** — do not use them.
 - **2026-07-29 11:10:00** — Desktop v0.1.2: the sidecar's stderr now goes to `<config dir>/sidecar-stderr.log` instead of vanishing into the GUI void, so engine failures are diagnosable; verified the portable layout under paths containing spaces.
 - **2026-07-29 10:55:15** — Desktop v0.1.1: fixed sidecar spawn on portable installs — Tauri's `resource_dir()` returns a `\\?\`-prefixed verbatim path whose use as the child's working directory killed the sidecar instantly, and the previous fallback pointed at the compile-time build-machine path (os error 267). `sidecar_dir()` now resolves relative to the running exe (portable `sidecar/` folder, dev `../../../sidecar`, NSIS resource dir) with the UNC prefix stripped, and a spawn failure shows a native dialog naming the expected files instead of a console-only message.
@@ -13,11 +15,25 @@
 
 # CSV Grid Editor
 
+## 🚀 世界上打开 CSV 文件最快的软件 · The Fastest CSV Opener on Earth
+
 [![Version](https://badgen.net/vs-marketplace/v/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
 [![Installs](https://badgen.net/vs-marketplace/i/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
 [![Rating](https://badgen.net/vs-marketplace/rating/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus&ssr=false#review-details)
 
-A fast, feature-rich CSV/TSV editor for Visual Studio Code. Opens CSV files in a sortable, filterable, editable grid — right inside your editor, no external tools needed.
+A fast, feature-rich CSV/TSV editor for Visual Studio Code.
+
+---
+
+## ☕ 如果你觉得好用，Buy Me a Coffee
+
+**If this saves you time, fuel the next feature with a coffee — 谢谢你的支持！**
+
+<p align="center">
+  <img src="images/alipay-qr.jpg" alt="支付宝收款码 · Alipay QR Code" width="280">
+</p>
+
+--- Opens CSV files in a sortable, filterable, editable grid — right inside your editor, no external tools needed.
 
 ![CSV Grid Editor: open, view and edit CSV and TSV files in a grid inside VS Code](https://raw.githubusercontent.com/Robin-Reiche/csv-grid-editor/master/images/social-preview.png)
 

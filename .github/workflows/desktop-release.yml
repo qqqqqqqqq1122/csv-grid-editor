@@ -47,13 +47,14 @@ jobs:
       - name: Tauri build (NSIS installer)
         run: npx tauri build
 
-      - name: Assemble portable zip (exe + sidecar)
+      - name: Assemble portable zip (exe + sidecar + support QR)
         shell: pwsh
         run: |
           $stage = "portable-stage"
           New-Item -ItemType Directory -Force "$stage/sidecar" | Out-Null
           Copy-Item "src-tauri/target/release/csv-grid-editor-plus.exe" "$stage/CSV Grid Editor Plus.exe"
           Copy-Item "sidecar/main.js", "sidecar/node.exe" "$stage/sidecar/"
+          Copy-Item "../images/alipay-qr.jpg" "$stage/buy-me-a-coffee-alipay-qr.jpg"
           Compress-Archive -Path "$stage/*" -DestinationPath "csv-grid-editor-plus-portable.zip" -Force
 
       - name: Upload Release

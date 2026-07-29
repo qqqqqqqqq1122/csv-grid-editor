@@ -4,6 +4,11 @@
 .omc/**
 .github/**
 images/**
+!images/alipay-qr.jpg
+csv-desktop/**
+csv-core/node_modules/**
+csv-core/out/**
+csv-core/test/**
 clearView_code_example/**
 src/**
 docs/**
