@@ -11,8 +11,17 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Listener, Manager, State, Theme, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+// Spawning node.exe (a console-subsystem binary) from our GUI app would pop a
+// black console window without this flag.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const MAX_RECENT: usize = 8;
 
@@ -65,6 +74,22 @@ fn resolved_theme(cfg: &Value, system_dark: bool) -> &'static str {
 }
 
 // ── Sidecar lifecycle + NDJSON bridge ──
+
+fn kill_sidecar(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if let Some(mut child) = state.sidecar_child.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+    *state.sidecar_stdin.lock().unwrap() = None;
+}
+
+fn show_main_window(app: &AppHandle) {
+    for window in app.webview_windows().values() {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
 
 
 // Strip the \\?\ verbatim prefix some Tauri path APIs return — it breaks
@@ -122,13 +147,16 @@ fn spawn_sidecar(app: &AppHandle) {
         .map(Stdio::from)
         .unwrap_or_else(|_| Stdio::inherit());
 
-    let child = Command::new(&node)
+    let mut command = Command::new(&node);
+    command
         .arg(dir.join("main.js"))
         .current_dir(&dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(stderr_target)
-        .spawn();
+        .stderr(stderr_target);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let child = command.spawn();
 
     let mut child = match child {
         Ok(c) => c,
@@ -346,9 +374,7 @@ pub fn run() {
             if let Some(path) = csv_arg(&args) {
                 open_path(app, path);
             }
-            if let Some(window) = app.webview_windows().values().next() {
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -368,6 +394,37 @@ pub fn run() {
             if let Ok(menu) = build_menu(&app.handle()) {
                 app.set_menu(menu)?;
             }
+
+            // System tray: the app keeps running in the background — closing
+            // the window hides it, the tray icon brings it back, and only
+            // "Quit" here actually exits (killing the sidecar first).
+            let tray_menu = MenuBuilder::new(app)
+                .item(&MenuItemBuilder::with_id("tray-show", "显示 CSV Grid Editor Plus").build(app)?)
+                .item(&MenuItemBuilder::with_id("tray-quit", "退出 Quit").build(app)?)
+                .build()?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().expect("app icon").clone())
+                .tooltip("CSV Grid Editor Plus")
+                .menu(&tray_menu)
+                .on_menu_event(|app, event| match event.id().0.as_str() {
+                    "tray-show" => show_main_window(app),
+                    "tray-quit" => {
+                        kill_sidecar(app);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
 
             // Frontend → sidecar bridges. 'sidecar-in' carries webview-protocol
             // messages (wrapped as {cmd:'msg'}); 'host-cmd' carries session
@@ -426,17 +483,26 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            // Follow-live: when the OS theme flips and the user chose "Follow
-            // System", push the new resolved theme to the frontend.
-            if let WindowEvent::ThemeChanged(theme) = event {
-                let app = window.app_handle();
-                let state = app.state::<AppState>();
-                let cfg = state.config.lock().unwrap().clone();
-                let mode = cfg.get("theme").and_then(Value::as_str).unwrap_or("system");
-                if mode == "system" {
-                    let resolved = if matches!(theme, Theme::Dark) { "dark" } else { "light" };
-                    let _ = app.emit("theme-changed", resolved);
+            match event {
+                // Closing the window hides it to the tray instead of quitting —
+                // the app (and its sidecar) keeps running in the background.
+                WindowEvent::CloseRequested { api, .. } => {
+                    let _ = window.hide();
+                    api.prevent_close();
                 }
+                // Follow-live: when the OS theme flips and the user chose "Follow
+                // System", push the new resolved theme to the frontend.
+                WindowEvent::ThemeChanged(theme) => {
+                    let app = window.app_handle();
+                    let state = app.state::<AppState>();
+                    let cfg = state.config.lock().unwrap().clone();
+                    let mode = cfg.get("theme").and_then(Value::as_str).unwrap_or("system");
+                    if mode == "system" {
+                        let resolved = if matches!(theme, Theme::Dark) { "dark" } else { "light" };
+                        let _ = app.emit("theme-changed", resolved);
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![get_config, get_pending_file, save_export_file])
