@@ -1,5 +1,9 @@
 // CSV Grid Editor Plus — Tauri shell.
 //
+// Release builds must be windows-subsystem (no console window of our own);
+// debug builds keep the console so Rust logs are visible.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Deliberately minimal: the Rust layer owns ONLY native desktop concerns —
 // window, sidecar process lifecycle, NDJSON line bridge, CLI/file-association
 // args, system theme follow + manual override, recent files, native dialogs,

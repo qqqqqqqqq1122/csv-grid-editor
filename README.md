@@ -1,5 +1,7 @@
 ## Revision History
 
+- **2026-07-29 16:29:56** — Desktop v0.1.6: the black window users actually saw was the app exe's OWN console — added `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` to main.rs (v0.1.5 only silenced the sidecar). Verified zero console windows and zero conhost processes parented to the app.
+
 - **2026-07-29 16:14:02** — Desktop v0.1.5: no more black console window — the sidecar is spawned with CREATE_NO_WINDOW; added a system tray icon: closing the window hides the app to the tray (sidecar keeps running), left-click / "显示" restores it, "退出 Quit" kills the sidecar and exits for real. Relaunching via file association restores the hidden window (single-instance).
 
 - **2026-07-29 12:59:20** — Branding & support: added the headline "世界上打开 CSV 文件最快的软件 · The Fastest CSV Opener on Earth" and a prominent "如果你觉得好用，Buy Me a Coffee" section with the Alipay QR code (images/alipay-qr.jpg); the QR image is also shipped inside the desktop portable zip. Extension bumped to v1.15.1 (README-only), desktop to v0.1.3.
