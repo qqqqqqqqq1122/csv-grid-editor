@@ -105,12 +105,24 @@ fn spawn_sidecar(app: &AppHandle) {
     let dir = sidecar_dir(app);
     let node = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
 
-    let child = Command::new(node)
+    // The sidecar's stderr goes to a log file (GUI apps have no console), so a
+    // failing engine is diagnosable after the fact.
+    let log_path = state.config_path.parent()
+        .map(|d| d.join("sidecar-stderr.log"))
+        .unwrap_or_else(|| std::env::temp_dir().join("csv-sidecar-stderr.log"));
+    let stderr_target: Stdio = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::inherit());
+
+    let child = Command::new(&node)
         .arg(dir.join("main.js"))
         .current_dir(&dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(stderr_target)
         .spawn();
 
     let mut child = match child {
