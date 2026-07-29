@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CSV Grid Editor Plus",
+  "version": "0.1.0",
+  "identifier": "com.okok909090.csvgrideditorplus",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "CSV Grid Editor Plus",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 480,
+        "theme": null
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": ["../sidecar/main.js", "../sidecar/node.exe"],
+    "fileAssociations": [
+      {
+        "ext": ["csv"],
+        "name": "CSV file",
+        "description": "Comma-separated values — open with CSV Grid Editor Plus",
+        "mimeType": "text/csv",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["tsv"],
+        "name": "TSV file",
+        "description": "Tab-separated values — open with CSV Grid Editor Plus",
+        "mimeType": "text/tab-separated-values",
+        "role": "Viewer"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

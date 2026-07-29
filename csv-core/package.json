@@ -1,0 +1,16 @@
+{
+  "name": "csv-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared vscode-free CSV engine for csv-grid-editor-plus: streaming parser, byte offset index, large-file mode logic. Consumed by the VS Code extension (future) and the Tauri desktop sidecar.",
+  "license": "MIT",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "pretest": "tsc -p ./",
+    "test": "node test/run-all.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,64 @@
+# Desktop release pipeline (csv-desktop, Tauri 2.0).
+#
+# Trigger: push a tag like `desktop-v0.1.0` (or run manually). Builds the
+# frontend bundle + sidecar on windows-latest, runs `tauri build`, and
+# attaches the NSIS installer and a portable zip (exe + sidecar) to a
+# GitHub Release.
+
+name: desktop-release
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: csv-desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: csv-desktop/src-tauri
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build frontend assets + sidecar
+        run: |
+          node build-frontend.mjs
+          node build-sidecar.mjs
+
+      - name: Tauri build (NSIS installer)
+        run: npx tauri build
+
+      - name: Assemble portable zip (exe + sidecar)
+        shell: pwsh
+        run: |
+          $stage = "portable-stage"
+          New-Item -ItemType Directory -Force "$stage/sidecar" | Out-Null
+          Copy-Item "src-tauri/target/release/csv-grid-editor-plus.exe" "$stage/CSV Grid Editor Plus.exe"
+          Copy-Item "sidecar/main.js", "sidecar/node.exe" "$stage/sidecar/"
+          Compress-Archive -Path "$stage/*" -DestinationPath "csv-grid-editor-plus-portable.zip" -Force
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            csv-desktop/csv-grid-editor-plus-portable.zip
+            csv-desktop/src-tauri/target/release/bundle/nsis/*.exe

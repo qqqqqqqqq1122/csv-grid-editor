@@ -1,5 +1,6 @@
 ## Revision History
 
+- **2026-07-29 10:22:29** — Added the **Tauri 2.0 desktop edition**: the repo is now a modular project with `csv-core/` (shared vscode-free engine: streaming parser, byte-offset index, large-file logic, `DocumentSession`, NDJSON sidecar) and `csv-desktop/` (Tauri Rust shell + Node.js sidecar + the extension's webview frontend reused verbatim via an IPCAdapter shim). The VS Code extension at the repo root is completely untouched. Windows x64 builds (NSIS installer + portable zip, .csv/.tsv file association) are produced by the `desktop-release` GitHub Actions workflow on `desktop-v*` tags. Details in [Desktop Edition (Tauri)](#desktop-edition-tauri).
 - **2026-07-29 09:07:55** — v1.15.0: added the optional **Byte Offset Index** cache layer on top of the (unchanged) chunk-streaming architecture. First opens stay pure streaming with zero extra disk writes; after the same large file is opened 3× (configurable) or via the new "Accelerate Repeated Opening" command, a background-built `.csvidx` (per-row 64-bit offsets, stored only in the extension's global storage, named by path hash) gives Paged View instant repeat opens. Reuse is guarded by size + mtime + content fingerprint; LRU cap (10) and 30-day stale cleanup run in the background. Details in [Local Modification: Byte Offset Index Cache](#local-modification-byte-offset-index-cache).
 - **2026-07-29 08:45:06** — v1.14.0: added **Fast Open (chunk streaming)** — large files opened in full render the header + first 200 records instantly, then the Extension Host streams the remaining records in background batches (quote-aware parser, in-memory only, zero disk cache) which the grid appends silently; and **Column Global Search** — right-click a column header → "Search this column (whole file)…" streams the entire file testing only that column, destroys the stream after 1,000 matches, and shows the matches with their source row numbers. Details in [Local Modification: Fast Open & Column Global Search](#local-modification-fast-open--column-global-search).
 - **2026-07-28 21:03:56** — Renamed the extension `name` from `csv-grid-editor` to `csv-grid-editor-plus` (display name "CSV Grid Editor Plus") because the Marketplace rejected the original name as already taken; badges updated to `okok909090.csv-grid-editor-plus`.
@@ -446,6 +447,63 @@ index exists.
 
 ---
 
+---
+
+## Desktop Edition (Tauri)
+
+*(Local fork addition, 2026-07-29 — a standalone desktop app for users without VS Code. The VS Code extension at the repo root is completely untouched.)*
+
+### Architecture
+
+```
+repo root (= the VS Code extension, unchanged)
+├── csv-core/         shared Node.js/TypeScript engine — the SAME logic the extension uses
+│   ├── src/csvStream.ts  byteOffsetIndex.ts  largeFileMode.ts   (copied verbatim)
+│   ├── src/documentSession.ts   vscode-free port of the extension's provider
+│   └── src/sidecarMain.ts       NDJSON (stdin/stdout) sidecar protocol
+└── csv-desktop/      Tauri 2.0 desktop shell
+    ├── index.html  theme.css    frontend shell + IPCAdapter shim
+    ├── build-frontend.mjs       bundles the extension's src/webview UNCHANGED
+    ├── build-sidecar.mjs        bundles csv-core → sidecar/main.js + node.exe
+    └── src-tauri/               Rust: window, sidecar process, file association,
+                                 theme, recent files, native dialogs
+```
+
+**Core principle: no rewrites.** The CSV engine (fast-open streaming, column
+search, byte-offset index + LRU) runs as a Node.js sidecar process — byte-for-byte
+the same code as the extension. The AG Grid frontend is bundled from the
+extension's unmodified `src/webview` source; the desktop only provides a thin
+`vscodeApi` shim (`postMessage` → Tauri events → sidecar stdin, and back).
+
+The Rust layer is intentionally minimal: it spawns `node.exe sidecar/main.js`,
+bridges newline-delimited JSON between the webview and the sidecar, and adds
+native desktop features — .csv/.tsv file association and double-click launch,
+Follow-System / Dark / Light theme (live OS theme events, persisted choice),
+Recent Files menu, native open/save dialogs, and `config.json` persistence.
+Sidecar index cache and open-count bookkeeping live under
+`%APPDATA%\csv-grid-editor-plus\`.
+
+### Build & verify
+
+```bash
+cd csv-core     && npm install && npm test          # 4 test files (incl. sidecar E2E)
+cd csv-desktop  && npm install && node build-frontend.mjs && node build-sidecar.mjs
+cd csv-desktop/src-tauri && cargo check
+cd csv-desktop  && npx tauri build                  # NSIS installer + exe
+```
+
+### Packaging
+
+- **NSIS installer** (per-user, registers .csv/.tsv association) and a
+  **portable zip** (exe + sidecar folder) are built by
+  `.github/workflows/desktop-release.yml` on `desktop-v*` tags and attached to
+  GitHub Releases.
+- Size reality check: the bundled Node runtime dominates — installer ≈ 40 MB,
+  portable ≈ 100 MB. (The 15–25 MB goal is only reachable without bundling
+  Node; rejected in favour of zero-prerequisite installs.)
+
+---
+
 # CSV Grid Editor（中文版）
 
 > 本项目 fork 自 [Robin-Reiche/csv-grid-editor](https://github.com/Robin-Reiche/csv-grid-editor)（MIT 许可证），由 okok909090 维护。本 fork 新增了「可配置大文件打开模式」，详见文末[本地修改说明](#本地修改可配置大文件打开模式)。
@@ -698,3 +756,43 @@ index exists.
 ### 验证
 
 `npx tsc -p ./` 编译无错误，`npm test` 全部 9 个测试文件通过。
+
+---
+
+## 桌面版（Tauri 2.0）
+
+*（本 fork 新增，2026-07-29 —— 面向不使用 VS Code 的用户的独立桌面应用。仓库根目录的 VS Code 插件完全未动。）*
+
+### 架构
+
+```
+仓库根目录（= VS Code 插件，未改动）
+├── csv-core/         共享 Node.js/TypeScript 引擎——与插件同源的核心逻辑
+│   ├── src/csvStream.ts  byteOffsetIndex.ts  largeFileMode.ts   （原样复制）
+│   ├── src/documentSession.ts   插件 provider 的 vscode-free 移植
+│   └── src/sidecarMain.ts       NDJSON（stdin/stdout）sidecar 协议
+└── csv-desktop/      Tauri 2.0 桌面壳
+    ├── index.html  theme.css    前端外壳 + IPCAdapter shim
+    ├── build-frontend.mjs       直接打包插件的 src/webview（不修改）
+    ├── build-sidecar.mjs        打包 csv-core → sidecar/main.js + node.exe
+    └── src-tauri/               Rust：窗口、sidecar 进程、文件关联、
+                                 主题、最近文件、原生对话框
+```
+
+**核心原则：不重写。** CSV 引擎（秒开流式加载、按列搜索、字节偏移索引 + LRU）以 Node.js sidecar 子进程运行——与插件逐字节同源。AG Grid 前端由插件未修改的 `src/webview` 源码直接打包，桌面端只提供一层薄薄的 `vscodeApi` shim（`postMessage` → Tauri 事件 → sidecar stdin，反向同理）。
+
+Rust 层刻意保持极简：spawn `node.exe sidecar/main.js`、在 webview 与 sidecar 之间桥接 NDJSON，其余只做原生桌面能力——.csv/.tsv 文件关联与双击启动、跟随系统/深色/浅色主题（监听系统主题实时切换、用户选择持久化）、最近文件菜单、原生打开/保存对话框、config.json 持久化。索引缓存与打开计数存放在 `%APPDATA%\csv-grid-editor-plus\`。
+
+### 构建与验证
+
+```bash
+cd csv-core     && npm install && npm test          # 4 个测试文件（含 sidecar 端到端）
+cd csv-desktop  && npm install && node build-frontend.mjs && node build-sidecar.mjs
+cd csv-desktop/src-tauri && cargo check
+cd csv-desktop  && npx tauri build                  # NSIS 安装包 + exe
+```
+
+### 打包
+
+- **NSIS 安装包**（per-user 安装，注册 .csv/.tsv 文件关联）与**绿色便携 zip**（exe + sidecar 目录）由 `.github/workflows/desktop-release.yml` 在 `desktop-v*` 标签触发构建并发布到 GitHub Releases。
+- 体积现实：捆绑的 Node 运行时占大头——安装包约 40 MB，便携版约 100 MB（15–25MB 只有不捆绑 Node 才能达到，已被否决，优先保证开箱即用）。

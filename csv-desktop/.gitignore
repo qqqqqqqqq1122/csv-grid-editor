@@ -1,0 +1,6 @@
+/dist/
+/sidecar/main.js
+/sidecar/node.exe
+/src-tauri/target/
+/src-tauri/gen/
+node_modules/

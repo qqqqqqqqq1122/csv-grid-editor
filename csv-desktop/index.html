@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Grid Editor Plus</title>
+    <link rel="stylesheet" href="assets/ag-grid.css">
+    <link rel="stylesheet" href="assets/ag-theme-alpine.css">
+    <link rel="stylesheet" href="assets/codicon.css">
+    <link rel="stylesheet" href="assets/webview.css">
+    <link rel="stylesheet" href="theme.css">
+</head>
+<body class="vscode-dark">
+    <!-- Loading overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-label" id="loading-label">Loading…</div>
+        <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+    </div>
+
+    <!-- Preview banner: inserted by the bootstrap only for preview documents -->
+
+    <!-- Toolbar (non-preview defaults; the bootstrap hides edit chrome for previews) -->
+    <div class="toolbar">
+        <button id="btn-undo"    title="Undo (Ctrl+Z)"  disabled><i class="codicon codicon-discard"></i></button>
+        <button id="btn-redo"    title="Redo (Ctrl+Y)"  disabled><i class="codicon codicon-redo"></i></button>
+        <div    class="separator" id="sep-undo"></div>
+        <button id="btn-autofit" title="Auto-fit column widths"><i class="codicon codicon-arrow-both"></i></button>
+        <div    class="separator"></div>
+        <button id="btn-clear-filters" title="Clear all filters" style="display:none;"><i class="codicon codicon-filter-filled"></i><span class="filter-clear-label">Clear</span></button>
+        <div    class="separator" id="sep-filters" style="display:none;"></div>
+        <button id="btn-zoom-out" title="Decrease size (Ctrl+-)"><i class="codicon codicon-zoom-out"></i></button>
+        <span   id="zoom-level"  style="font-size:11px;min-width:28px;text-align:center;opacity:0.6;">100%</span>
+        <button id="btn-zoom-in"  title="Increase size (Ctrl+=)"><i class="codicon codicon-zoom-in"></i></button>
+        <div    class="separator"></div>
+        <button id="btn-profile"       title="Column Profile"><i class="codicon codicon-graph"></i></button>
+        <button id="btn-columns"       title="Show / hide columns"><i class="codicon codicon-checklist"></i></button>
+        <button id="btn-colormode"     title="Color columns — distinct, theme-aware tint per column"><i class="codicon codicon-symbol-color"></i></button>
+        <div    class="separator"></div>
+        <button id="btn-find-replace"  title="Find &amp; Replace (Ctrl+F)"><i class="codicon codicon-search"></i></button>
+        <div    class="separator"></div>
+        <button id="btn-go-to-row"     title="Go to row (Ctrl+G)"><i class="codicon codicon-list-ordered"></i></button>
+        <button id="btn-duplicates"    title="Find duplicate rows"><i class="codicon codicon-files"></i></button>
+        <div    class="separator"></div>
+        <button id="btn-export"        title="Export as JSON, JSON Lines or Markdown" class="text-btn"><i class="codicon codicon-export"></i> Export</button>
+        <div    class="separator"></div>
+        <span   id="delim-badge" class="delim-badge" title="Click to change delimiter">Delim: ,</span>
+        <span   class="info" id="info"></span>
+    </div>
+
+    <!-- Delimiter dropdown [F2] -->
+    <div id="delim-dropdown" class="delim-dropdown hidden">
+        <div class="delim-option" data-delim=",">,&nbsp;&nbsp; Comma</div>
+        <div class="delim-option" data-delim=";">;&nbsp;&nbsp; Semicolon</div>
+        <div class="delim-option" data-delim="\t">&#x21E5;&nbsp; Tab</div>
+        <div class="delim-option" data-delim="|">|&nbsp;&nbsp; Pipe</div>
+    </div>
+
+    <!-- Export format dropdown -->
+    <div id="export-dropdown" class="delim-dropdown hidden">
+        <div class="export-option" data-format="json">JSON</div>
+        <div class="export-option" data-format="jsonl">JSON Lines</div>
+        <div class="export-option" data-format="md">Markdown table</div>
+    </div>
+
+    <!-- Go to Row popover -->
+    <div id="goto-popover" class="goto-popover hidden">
+        <label class="goto-label" for="goto-input">Go to row</label>
+        <div class="goto-input-row">
+            <input id="goto-input" type="number" min="1" step="1" placeholder="1" inputmode="numeric">
+            <span id="goto-hint" class="goto-hint">of 0</span>
+        </div>
+        <div class="goto-actions">
+            <button id="goto-cancel" class="goto-btn goto-btn-secondary">Cancel</button>
+            <button id="goto-go"     class="goto-btn goto-btn-primary">Go</button>
+        </div>
+        <div id="goto-error" class="goto-error" style="display:none;"></div>
+    </div>
+
+    <!-- Rename column popover -->
+    <div id="rename-popover" class="goto-popover hidden">
+        <label class="goto-label" for="rename-input">Rename column</label>
+        <div class="goto-input-row">
+            <input id="rename-input" type="text" spellcheck="false" placeholder="Column name">
+        </div>
+        <div class="goto-actions">
+            <button id="rename-cancel" class="goto-btn goto-btn-secondary">Cancel</button>
+            <button id="rename-ok"     class="goto-btn goto-btn-primary">Rename</button>
+        </div>
+    </div>
+
+    <!-- Column chooser popover (show/hide columns) -->
+    <div id="col-chooser-popover" class="col-chooser-popover hidden">
+        <div class="col-chooser-head">
+            <span class="goto-label" style="margin:0;">Columns</span>
+        </div>
+        <input id="col-chooser-search" class="csv-filter-input" type="text" placeholder="Search columns…" spellcheck="false">
+        <label id="col-chooser-master" class="col-chooser-master">
+            <input id="col-chooser-master-cb" type="checkbox">
+            <span id="col-chooser-master-label" class="col-chooser-master-label">Select all</span>
+            <span id="col-chooser-master-count" class="col-chooser-master-count"></span>
+        </label>
+        <div id="col-chooser-list" class="col-chooser-list"></div>
+    </div>
+
+    <!-- Column global search popover -->
+    <div id="colsearch-popover" class="goto-popover hidden">
+        <label class="goto-label" for="colsearch-input" id="colsearch-label">Search column</label>
+        <div class="goto-input-row">
+            <input id="colsearch-input" type="text" spellcheck="false" placeholder="Keyword…">
+        </div>
+        <div class="goto-actions">
+            <button id="colsearch-cancel" class="goto-btn goto-btn-secondary">Cancel</button>
+            <button id="colsearch-ok"     class="goto-btn goto-btn-primary">Search</button>
+        </div>
+    </div>
+
+    <!-- Column global search result banner -->
+    <div id="colsearch-banner" class="dup-banner hidden">
+        <span class="dup-banner-icon"><i class="codicon codicon-search"></i></span>
+        <span id="colsearch-banner-text" class="dup-banner-text"></span>
+        <button id="colsearch-show-all" class="dup-banner-btn">Show all rows</button>
+        <button id="colsearch-dismiss"  class="dup-banner-btn dup-banner-btn-secondary">Dismiss</button>
+    </div>
+
+    <!-- Duplicate banner -->
+    <div id="dup-banner" class="dup-banner hidden">
+        <span class="dup-banner-icon"><i class="codicon codicon-files"></i></span>
+        <span id="dup-banner-text" class="dup-banner-text"></span>
+        <button id="dup-only-toggle" class="dup-banner-btn">Show only duplicates</button>
+        <button id="dup-dismiss"     class="dup-banner-btn dup-banner-btn-secondary">Dismiss</button>
+    </div>
+
+    <!-- Find & Replace bar -->
+    <div id="find-bar" class="find-bar hidden">
+        <span class="find-section-label">Find</span>
+        <input  id="find-input"    class="find-input" type="text" placeholder="Search…" spellcheck="false">
+        <button id="find-case-btn" class="find-case-btn" title="Match case">Aa</button>
+        <button id="find-prev"     class="find-btn" title="Previous match (Shift+Enter)"><i class="codicon codicon-arrow-up"></i></button>
+        <button id="find-next"     class="find-btn" title="Next match (Enter)"><i class="codicon codicon-arrow-down"></i></button>
+        <span   id="find-count"    class="find-count"></span>
+        <div    class="find-sep"></div>
+        <span class="find-section-label">Replace</span>
+        <input  id="replace-input" class="find-input" type="text" placeholder="Replace with…" spellcheck="false">
+        <button id="replace-one"   class="find-btn find-action-btn" title="Replace current">Replace</button>
+        <button id="replace-all"   class="find-btn find-action-btn" title="Replace all">All</button>
+        <button id="find-close"    class="find-close" title="Close (Esc)"><i class="codicon codicon-close"></i></button>
+    </div>
+
+    <!-- Main content -->
+    <div id="content-row">
+        <div id="grid-container" class="ag-theme-alpine-dark"></div>
+
+        <div id="profile-panel">
+            <div class="profile-resize-handle" id="profile-resize-handle"></div>
+            <div class="profile-panel-header">
+                <span class="profile-panel-title">Column Profile</span>
+                <div class="profile-dock-btns">
+                    <button class="profile-dock-btn" data-dock="left"   title="Dock left"><i class="codicon codicon-layout-sidebar-left"></i></button>
+                    <button class="profile-dock-btn" data-dock="bottom" title="Dock bottom"><i class="codicon codicon-layout-panel"></i></button>
+                    <button class="profile-dock-btn profile-dock-btn--active" data-dock="right"  title="Dock right"><i class="codicon codicon-layout-sidebar-right"></i></button>
+                </div>
+                <button class="profile-panel-close" id="btn-profile-close" title="Close"><i class="codicon codicon-close"></i></button>
+            </div>
+            <div class="profile-scroll" id="profile-scroll"></div>
+        </div>
+    </div><!-- /#content-row -->
+
+    <!-- Column context menu [F5] -->
+    <div id="col-context-menu" class="col-context-menu hidden">
+        <div id="col-ctx-insert-left"  class="col-ctx-item"><i class="codicon codicon-arrow-left"></i><span class="col-ctx-label">Insert column left</span></div>
+        <div id="col-ctx-insert-right" class="col-ctx-item"><i class="codicon codicon-arrow-right"></i><span class="col-ctx-label">Insert column right</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-rename"   class="col-ctx-item"><i class="codicon codicon-edit"></i><span class="col-ctx-label">Rename column</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-select"   class="col-ctx-item"><i class="codicon codicon-list-selection"></i><span class="col-ctx-label">Select column</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-search"   class="col-ctx-item"><i class="codicon codicon-search"></i><span class="col-ctx-label">Search this column (whole file)…</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-freeze"   class="col-ctx-item"><i class="codicon codicon-pinned"></i><span class="col-ctx-label">Freeze column</span></div>
+        <div id="col-ctx-unfreeze" class="col-ctx-item" style="display:none;"><i class="codicon codicon-pin"></i><span class="col-ctx-label">Unfreeze column</span></div>
+        <div id="col-ctx-unfreeze-all" class="col-ctx-item" style="display:none;"><i class="codicon codicon-pin"></i><span class="col-ctx-label">Unfreeze all columns</span></div>
+        <div class="col-ctx-separator"></div>
+        <div id="col-ctx-delete"   class="col-ctx-item danger"><i class="codicon codicon-trash"></i><span class="col-ctx-label">Delete column</span></div>
+    </div>
+
+    <!-- Row context menu -->
+    <div id="row-context-menu" class="row-context-menu hidden">
+        <div id="row-ctx-delete" class="row-ctx-item danger"><i class="codicon codicon-trash"></i><span class="row-ctx-label">Delete row</span></div>
+    </div>
+
+    <!-- Pagination bar [F7] -->
+    <div id="pagination-bar" class="pagination-bar hidden">
+        <button id="btn-page-first" class="page-btn" title="First page"  disabled>&#x21E4;</button>
+        <button id="btn-page-prev"  class="page-btn" title="Previous page" disabled>&#x25C4;</button>
+        <span   id="page-info"      class="page-info">Page 1 / 1</span>
+        <button id="btn-page-next"  class="page-btn" title="Next page">&#x25BA;</button>
+        <button id="btn-page-last"  class="page-btn" title="Last page">&#x21E5;</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <span class="sel-stats" id="sel-stats"></span>
+        <span class="status" id="status"></span>
+    </div>
+
+    <!-- AG Grid (bundled locally) -->
+    <script src="assets/ag-grid-community.min.js"></script>
+
+    <!-- IPCAdapter shim: the bundle was written against VS Code's webview API.
+         Here the same two touchpoints (vscodeApi.postMessage out, window
+         'message' events in) are bridged to Tauri events, which the Rust shell
+         forwards to the Node sidecar's stdin/stdout. A test/mock bridge can
+         substitute window.__CSV_MOCK_TAURI__ when running outside Tauri. -->
+    <script>
+        const __tauri = window.__TAURI__ || window.__CSV_MOCK_TAURI__;
+
+        const vscodeApi = {
+            postMessage: (m) => __tauri.event.emit('sidecar-in', m),
+            getState: () => null,
+            setState: () => {}
+        };
+
+        // ── Desktop bootstrap ────────────────────────────────────────────────
+        // Static HTML can't bake per-document constants the way the VS Code
+        // extension generates HTML per editor, so the flow is:
+        //   1. send {cmd:'open'} for the pending path
+        //   2. on {type:'opened'} inject the ambient globals the bundle reads
+        //      (IS_PREVIEW, PREVIEW_MODE, …) as real `const` declarations
+        //   3. mount assets/webview.js
+        // Opening another file stores the path and reloads.
+        (function () {
+            const state = { booted: false, config: null, meta: null };
+            window.__csvBoot = state;
+
+            const BOOTSTRAP_TYPES = new Set([
+                'opened', 'exportData', 'saved', 'saveRefused',
+                'indexBuilt', 'indexError', 'error'
+            ]);
+
+            __tauri.event.listen('sidecar-out', (e) => {
+                const msg = e.payload;
+                if (!msg || !msg.type) return;
+                if (!BOOTSTRAP_TYPES.has(msg.type)) {
+                    window.dispatchEvent(new MessageEvent('message', { data: msg }));
+                    return;
+                }
+                if (msg.type === 'opened') onOpened(msg);
+                else if (msg.type === 'exportData') onExportData(msg);
+                else if (msg.type === 'saved') setStatus('Saved');
+                else if (msg.type === 'saveRefused') setStatus(msg.reason || 'Save refused');
+                else if (msg.type === 'indexBuilt') setStatus('Byte offset index ready — repeated opens will be faster');
+                else if (msg.type === 'indexError') setStatus('Index build failed: ' + msg.message);
+                else if (msg.type === 'error') setStatus('Error: ' + msg.message);
+            });
+
+            __tauri.event.listen('open-file', (e) => {
+                sessionStorage.setItem('csv-pending-open', e.payload);
+                if (state.booted) location.reload();
+            });
+
+            __tauri.event.listen('theme-changed', (e) => applyTheme(e.payload));
+
+            document.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                    e.preventDefault();
+                    __tauri.event.emit('host-cmd', { cmd: 'save' });
+                }
+            });
+
+            function setStatus(text) {
+                const el = document.getElementById('status');
+                if (el) el.textContent = text;
+            }
+
+            function applyTheme(theme) { // 'dark' | 'light'
+                document.body.classList.remove('vscode-dark', 'vscode-light');
+                document.body.classList.add(theme === 'light' ? 'vscode-light' : 'vscode-dark');
+            }
+
+            function applyPreviewChrome(meta) {
+                if (meta.isPreview) {
+                    for (const id of ['btn-undo', 'btn-redo', 'btn-export', 'sep-undo']) {
+                        const el = document.getElementById(id);
+                        if (el) el.style.display = 'none';
+                    }
+                    const banner = document.createElement('div');
+                    banner.className = 'preview-banner';
+                    banner.innerHTML = '<span class="preview-icon"><i class="codicon codicon-eye"></i></span><span id="preview-text"></span>';
+                    document.body.insertBefore(banner, document.body.children[1]);
+                }
+                if (meta.isChunked) {
+                    for (const id of ['btn-go-to-row', 'btn-duplicates']) {
+                        const el = document.getElementById(id);
+                        if (el) el.disabled = true;
+                    }
+                }
+            }
+
+            async function onExportData(msg) {
+                try {
+                    const written = await __tauri.invoke('save_export_file', {
+                        filename: msg.filename, text: msg.text
+                    });
+                    setStatus(written ? ('Exported to ' + written) : 'Export cancelled');
+                } catch (err) {
+                    setStatus('Export failed: ' + err);
+                }
+            }
+
+            async function onOpened(meta) {
+                state.meta = meta;
+                const cfg = state.config || {};
+                applyPreviewChrome(meta);
+
+                // Inject the exact ambient globals the bundle reads — as real
+                // const declarations, like the VS Code host does.
+                const g = document.createElement('script');
+                g.textContent =
+                    'const IS_PREVIEW = ' + !!meta.isPreview + ';' +
+                    'const PREVIEW_MODE = ' + JSON.stringify(meta.previewMode) + ';' +
+                    'const TOTAL_LINE_COUNT = ' + (meta.totalLineCount || 0) + ';' +
+                    'const DELIMITER = ' + JSON.stringify(meta.delimiter) + ';' +
+                    'const FILENAME = ' + JSON.stringify(meta.fileName) + ';' +
+                    'const IS_CHUNKED = ' + !!meta.isChunked + ';' +
+                    'const INITIAL_ZOOM_INDEX = ' + (cfg.zoomIndex ?? 4) + ';' +
+                    'const INITIAL_COLOR_MODE = ' + !!cfg.colorMode + ';';
+                document.head.appendChild(g);
+
+                const s = document.createElement('script');
+                s.src = 'assets/webview.js';
+                document.body.appendChild(s);
+                state.booted = true;
+                document.title = meta.fileName + ' — CSV Grid Editor Plus';
+            }
+
+            async function boot() {
+                try { state.config = await __tauri.invoke('get_config'); } catch { state.config = {}; }
+                applyTheme(state.config.themeResolved || 'dark');
+                // A file passed via CLI / file association may predate the
+                // 'open-file' listener — the shell holds it as pending.
+                if (!sessionStorage.getItem('csv-pending-open')) {
+                    try {
+                        const pending = await __tauri.invoke('get_pending_file');
+                        if (pending) sessionStorage.setItem('csv-pending-open', pending);
+                    } catch {}
+                }
+                const path = sessionStorage.getItem('csv-pending-open');
+                if (path) {
+                    __tauri.event.emit('host-cmd', { cmd: 'open', path: path, config: state.config });
+                } else {
+                    setStatus('Open a .csv file to begin (File → Open, or double-click a file)');
+                    const overlay = document.getElementById('loading-overlay');
+                    if (overlay) overlay.style.display = 'none';
+                }
+            }
+            boot();
+        })();
+    </script>
+</body>
+</html>
