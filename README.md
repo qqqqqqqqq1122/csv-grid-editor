@@ -18,10 +18,10 @@
 - **2026-07-28 20:47:26** — Re-published the fork under a new identity: `publisher` changed from `RobinReiche` to `okok909090`, `repository` / `homepage` / `bugs` URLs point to `github.com/qqqqqqqqq1122/csv-grid-editor`, Marketplace badges updated to the new publisher, and a full Chinese translation (中文版) appended at the bottom of this README. Original author attribution (LICENSE, sponsor, Contact section) kept per MIT.
 - **2026-07-28 20:17:58** — Renamed the `largeFileMode` value `prompt` to `ask` (the "ask every time" option, i.e. the original interactive behavior), so the four user-settable values are now `ask` / `head` / `tail` / `all` with `ask` as the default. The legacy value `prompt` is still accepted and treated as `ask`.
 - **2026-07-28 20:13:24** — Added configurable large-file mode: `csvGridEditor.largeFileMode` now accepts `prompt` / `head` / `tail` / `all`, `csvGridEditor.headRows` controls the preview row count, and a new Command Palette / right-click command `CSV Grid Editor: Set Large File Mode (head / tail / all)` switches modes at any time. Details in [Local Modification: Configurable Large File Mode](#local-modification-configurable-large-file-mode) at the bottom of this file.
-
+# VsCode plugin(you can directly search the following plugin name)
 # Fast Open CSV Viewer Pro
 
-## 🚀 世界上打开 CSV 文件最快的软件 · The Fastest CSV Opener on Earth
+## 🚀 世界上打开 CSV 文件最快的软件以及Vscode插件 · The Fastest CSV Opener on Earth
 
 [![Version](https://badgen.net/vs-marketplace/v/okok909090.fast-open-csv-viewer-pro)](https://marketplace.visualstudio.com/items?itemName=okok909090.fast-open-csv-viewer-pro)
 [![Installs](https://badgen.net/vs-marketplace/i/okok909090.fast-open-csv-viewer-pro)](https://marketplace.visualstudio.com/items?itemName=okok909090.fast-open-csv-viewer-pro)
@@ -527,7 +527,8 @@ Engine data (byte-offset index, open counts): `%APPDATA%\csv-grid-editor-plus\`.
   Node; rejected in favour of zero-prerequisite installs.)
 
 ---
-
+# VsCode 插件(您可以直接搜索以下插件名称)
+# Fast Open CSV Viewer Pro
 # CSV Grid Editor（中文版）
 
 > 本项目 fork 自 [Robin-Reiche/csv-grid-editor](https://github.com/Robin-Reiche/csv-grid-editor)（MIT 许可证），由 okok909090 维护。本 fork 新增了「可配置大文件打开模式」，详见文末[本地修改说明](#本地修改可配置大文件打开模式)。
