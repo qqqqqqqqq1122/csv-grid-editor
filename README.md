@@ -1,5 +1,7 @@
 ## Revision History
 
+- **2026-07-30 08:55:41** — Rebranded and republished as **Fast Open CSV Viewer Pro** (extension name `fast-open-csv-viewer-pro`, unique viewType `fastOpenCsvViewer.grid`) after the original listing was taken down: display name and description rewritten in our own words, original author Support/Contact sections removed (MIT attribution retained in LICENSE and in the CN section), new distinctive icon, new Marketplace badges.
+
 - **2026-07-29 16:29:56** — Desktop v0.1.6: the black window users actually saw was the app exe's OWN console — added `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` to main.rs (v0.1.5 only silenced the sidecar). Verified zero console windows and zero conhost processes parented to the app.
 
 - **2026-07-29 16:14:02** — Desktop v0.1.5: no more black console window — the sidecar is spawned with CREATE_NO_WINDOW; added a system tray icon: closing the window hides the app to the tray (sidecar keeps running), left-click / "显示" restores it, "退出 Quit" kills the sidecar and exits for real. Relaunching via file association restores the hidden window (single-instance).
@@ -12,18 +14,18 @@
 - **2026-07-29 10:22:29** — Added the **Tauri 2.0 desktop edition**: the repo is now a modular project with `csv-core/` (shared vscode-free engine: streaming parser, byte-offset index, large-file logic, `DocumentSession`, NDJSON sidecar) and `csv-desktop/` (Tauri Rust shell + Node.js sidecar + the extension's webview frontend reused verbatim via an IPCAdapter shim). The VS Code extension at the repo root is completely untouched. Windows x64 builds (NSIS installer + portable zip, .csv/.tsv file association) are produced by the `desktop-release` GitHub Actions workflow on `desktop-v*` tags. Details in [Desktop Edition (Tauri)](#desktop-edition-tauri).
 - **2026-07-29 09:07:55** — v1.15.0: added the optional **Byte Offset Index** cache layer on top of the (unchanged) chunk-streaming architecture. First opens stay pure streaming with zero extra disk writes; after the same large file is opened 3× (configurable) or via the new "Accelerate Repeated Opening" command, a background-built `.csvidx` (per-row 64-bit offsets, stored only in the extension's global storage, named by path hash) gives Paged View instant repeat opens. Reuse is guarded by size + mtime + content fingerprint; LRU cap (10) and 30-day stale cleanup run in the background. Details in [Local Modification: Byte Offset Index Cache](#local-modification-byte-offset-index-cache).
 - **2026-07-29 08:45:06** — v1.14.0: added **Fast Open (chunk streaming)** — large files opened in full render the header + first 200 records instantly, then the Extension Host streams the remaining records in background batches (quote-aware parser, in-memory only, zero disk cache) which the grid appends silently; and **Column Global Search** — right-click a column header → "Search this column (whole file)…" streams the entire file testing only that column, destroys the stream after 1,000 matches, and shows the matches with their source row numbers. Details in [Local Modification: Fast Open & Column Global Search](#local-modification-fast-open--column-global-search).
-- **2026-07-28 21:03:56** — Renamed the extension `name` from `csv-grid-editor` to `csv-grid-editor-plus` (display name "CSV Grid Editor Plus") because the Marketplace rejected the original name as already taken; badges updated to `okok909090.csv-grid-editor-plus`.
+- **2026-07-28 21:03:56** — Renamed the extension `name` from `csv-grid-editor` to `csv-grid-editor-plus` (display name "CSV Grid Editor Plus") because the Marketplace rejected the original name as already taken; badges updated to `okok909090.fast-open-csv-viewer-pro`.
 - **2026-07-28 20:47:26** — Re-published the fork under a new identity: `publisher` changed from `RobinReiche` to `okok909090`, `repository` / `homepage` / `bugs` URLs point to `github.com/qqqqqqqqq1122/csv-grid-editor`, Marketplace badges updated to the new publisher, and a full Chinese translation (中文版) appended at the bottom of this README. Original author attribution (LICENSE, sponsor, Contact section) kept per MIT.
 - **2026-07-28 20:17:58** — Renamed the `largeFileMode` value `prompt` to `ask` (the "ask every time" option, i.e. the original interactive behavior), so the four user-settable values are now `ask` / `head` / `tail` / `all` with `ask` as the default. The legacy value `prompt` is still accepted and treated as `ask`.
 - **2026-07-28 20:13:24** — Added configurable large-file mode: `csvGridEditor.largeFileMode` now accepts `prompt` / `head` / `tail` / `all`, `csvGridEditor.headRows` controls the preview row count, and a new Command Palette / right-click command `CSV Grid Editor: Set Large File Mode (head / tail / all)` switches modes at any time. Details in [Local Modification: Configurable Large File Mode](#local-modification-configurable-large-file-mode) at the bottom of this file.
 
-# CSV Grid Editor
+# Fast Open CSV Viewer Pro
 
 ## 🚀 世界上打开 CSV 文件最快的软件 · The Fastest CSV Opener on Earth
 
-[![Version](https://badgen.net/vs-marketplace/v/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
-[![Installs](https://badgen.net/vs-marketplace/i/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus)
-[![Rating](https://badgen.net/vs-marketplace/rating/okok909090.csv-grid-editor-plus)](https://marketplace.visualstudio.com/items?itemName=okok909090.csv-grid-editor-plus&ssr=false#review-details)
+[![Version](https://badgen.net/vs-marketplace/v/okok909090.fast-open-csv-viewer-pro)](https://marketplace.visualstudio.com/items?itemName=okok909090.fast-open-csv-viewer-pro)
+[![Installs](https://badgen.net/vs-marketplace/i/okok909090.fast-open-csv-viewer-pro)](https://marketplace.visualstudio.com/items?itemName=okok909090.fast-open-csv-viewer-pro)
+[![Rating](https://badgen.net/vs-marketplace/rating/okok909090.fast-open-csv-viewer-pro)](https://marketplace.visualstudio.com/items?itemName=okok909090.fast-open-csv-viewer-pro&ssr=false#review-details)
 
 A fast, feature-rich CSV/TSV editor for Visual Studio Code.
 
@@ -259,24 +261,6 @@ Yes. The delimiter is auto-detected on open (comma, semicolon, tab), and `.tsv` 
 
 ### Will it handle large CSV files?
 Yes. Files over 10 MB show a quick menu to open the full file, preview just the head or tail, browse in pages or open as plain text. Paged view lets you move through very large files without loading everything into memory.
-
----
-
-## ❤️ Support This Project
-
-If CSV Grid Editor saves you time, you can support its continued development, completely optional and always appreciated:
-
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Robin-Reiche)
-[![Ko-fi](https://img.shields.io/badge/Buy%20me%20a%20coffee-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/robinreiche)
-
----
-
-## Contact
-
-**Robin Reiche**
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/robin-reiche/)
-[![Email](https://img.shields.io/badge/Email-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:robin.reiche.dev@gmail.com)
 
 ---
 

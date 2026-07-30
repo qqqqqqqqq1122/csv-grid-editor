@@ -1,17 +1,14 @@
 {
-  "name": "csv-grid-editor-plus",
-  "displayName": "CSV Grid Editor Plus: CSV & TSV Viewer",
-  "description": "Open, view and edit CSV and TSV files in a fast sortable filterable grid. Inline editing, find and replace, freeze rows, column stats, Excel copy and paste and export to JSON. Free.",
-  "version": "1.15.1",
+  "name": "fast-open-csv-viewer-pro",
+  "displayName": "Fast Open CSV Viewer Pro: 世界上打开 CSV 文件最快的软件",
+  "description": "秒开超大 CSV/TSV 文件的极速网格编辑器。首屏 200 行毫秒级渲染，后台流式加载无感知，按列全文件搜索（1000 条截断），字节偏移索引缓存重复秒开。排序、筛选、冻结、查找替换、列统计、Excel 复制粘贴、导出 JSON。",
+  "version": "1.0.0",
   "publisher": "okok909090",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/qqqqqqqqq1122/csv-grid-editor"
-  },
-  "sponsor": {
-    "url": "https://github.com/sponsors/Robin-Reiche"
   },
   "homepage": "https://github.com/qqqqqqqqq1122/csv-grid-editor",
   "bugs": {
@@ -44,11 +41,11 @@
   ],
   "activationEvents": [],
   "main": "./out/extension.js",
-"contributes": {
+  "contributes": {
     "customEditors": [
       {
-        "viewType": "csvViewer.grid",
-        "displayName": "CSV Grid Editor",
+        "viewType": "fastOpenCsvViewer.grid",
+        "displayName": "Fast Open CSV Viewer Pro",
         "selector": [
           {
             "filenamePattern": "*.csv"
@@ -92,7 +89,12 @@
         "csvGridEditor.largeFileMode": {
           "type": "string",
           "default": "ask",
-          "enum": ["ask", "head", "tail", "all"],
+          "enum": [
+            "ask",
+            "head",
+            "tail",
+            "all"
+          ],
           "enumDescriptions": [
             "Ask every time: show a picker when opening a file larger than 10 MB (original behavior).",
             "Head: preview the first csvGridEditor.headRows rows of large files.",

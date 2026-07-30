@@ -100,7 +100,7 @@ class CsvDocument implements vscode.CustomDocument {
 
 export class CsvEditorProvider implements vscode.CustomEditorProvider<CsvDocument> {
 
-    public static readonly viewType = 'csvViewer.grid';
+    public static readonly viewType = 'fastOpenCsvViewer.grid';
 
     // The most recently registered provider — lets the command in extension.ts
     // reach instance services (manual index build).
