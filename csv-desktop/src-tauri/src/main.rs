@@ -414,7 +414,9 @@ pub fn run() {
                     "tray-show" => show_main_window(app),
                     "tray-quit" => {
                         kill_sidecar(app);
-                        app.exit(0);
+                        // app.exit(0) 在 Windows 上销毁托盘图标时会在 GDI32!InternalDeleteObject 崩溃
+                        // (共享图标句柄 double-delete)。改用硬退出绕过那段清理。
+                        std::process::exit(0);
                     }
                     _ => {}
                 })
