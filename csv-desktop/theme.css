@@ -119,3 +119,38 @@ body.vscode-light {
     --vscode-toolbar-activeBackground: rgba(166, 166, 166, 0.31);
     --vscode-tree-indentGuidesStroke: #a9a9a9;
 }
+
+/* ── Plain-text view (large-file "纯文本" mode) ─────────────────────────── */
+#plaintext-view {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: none;
+    flex-direction: column;
+    background: var(--vscode-editor-background, #1e1e1e);
+    color: var(--vscode-editor-foreground, #d4d4d4);
+}
+body.plaintext-mode #plaintext-view { display: flex; }
+body.plaintext-mode .toolbar,
+body.plaintext-mode #content-row,
+body.plaintext-mode .footer,
+body.plaintext-mode .loading-overlay { display: none !important; }
+#plaintext-banner {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    background: #cca700;
+    color: #000;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 12px;
+}
+#plaintext-content {
+    flex: 1;
+    margin: 0;
+    padding: 12px 16px;
+    overflow: auto;
+    white-space: pre;
+    tab-size: 4;
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 13px;
+    line-height: 1.4;
+}

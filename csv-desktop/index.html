@@ -204,6 +204,13 @@
         <span class="status" id="status"></span>
     </div>
 
+    <!-- Plain-text (read-only) view for the "纯文本" large-file mode. The grid
+         bundle is not mounted in this mode; the bootstrap fills this pre. -->
+    <div id="plaintext-view">
+        <div id="plaintext-banner">纯文本视图 — 只读</div>
+        <pre id="plaintext-content"></pre>
+    </div>
+
     <!-- AG Grid (bundled locally) -->
     <script src="assets/ag-grid-community.min.js"></script>
 
@@ -241,6 +248,13 @@
             __tauri.event.listen('sidecar-out', (e) => {
                 const msg = e.payload;
                 if (!msg || !msg.type) return;
+                // Plain-text mode: the grid bundle is not mounted, so consume
+                // the raw text here instead of forwarding it to a webview.
+                if (msg.type === 'init' && state.meta && state.meta.previewMode === 'plaintext') {
+                    const pre = document.getElementById('plaintext-content');
+                    if (pre) pre.textContent = msg.text || '';
+                    return;
+                }
                 if (!BOOTSTRAP_TYPES.has(msg.type)) {
                     window.dispatchEvent(new MessageEvent('message', { data: msg }));
                     return;
@@ -271,6 +285,7 @@
             document.addEventListener('keydown', (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                     e.preventDefault();
+                    if (document.body.classList.contains('plaintext-mode')) return;
                     __tauri.event.emit('host-cmd', { cmd: 'save' });
                 }
             });
@@ -353,6 +368,17 @@
 
             async function onOpened(meta) {
                 state.meta = meta;
+                if (meta.previewMode === 'plaintext') {
+                    state.booted = true;
+                    document.body.classList.add('plaintext-mode');
+                    const overlay = document.getElementById('loading-overlay');
+                    if (overlay) overlay.style.display = 'none';
+                    document.title = state.filePath || meta.fileName || 'CSV Grid Editor Plus';
+                    // No grid bundle in this mode: ask the sidecar for the raw
+                    // text directly (it replies with an 'init' message).
+                    __tauri.event.emit('host-cmd', { cmd: 'msg', msg: { type: 'ready' } });
+                    return;
+                }
                 const cfg = state.config || {};
                 applyPreviewChrome(meta);
 
@@ -379,13 +405,15 @@
                 document.title = state.filePath || meta.fileName || 'CSV Grid Editor Plus';
             }
 
-            function openPending(path) {
-                if (path) {
-                    state.filePath = path;
-                    __tauri.event.emit('host-cmd', { cmd: 'open', path: path, config: state.config });
-                    return true;
-                }
-                return false;
+            async function openPending(path) {
+                if (!path) return false;
+                // Re-read the config for every open: the native File → 大文件打开方式
+                // menu writes largeFileMode in the Rust shell after boot, so the
+                // config captured at startup may be stale.
+                try { state.config = await __tauri.core.invoke('get_config'); } catch { /* keep boot config */ }
+                state.filePath = path;
+                __tauri.event.emit('host-cmd', { cmd: 'open', path: path, config: state.config });
+                return true;
             }
 
             async function boot() {
@@ -399,7 +427,7 @@
                 try { pending = await __tauri.core.invoke('get_pending_file'); } catch {}
                 const path = pending || sessionStorage.getItem('csv-pending-open');
                 sessionStorage.removeItem('csv-pending-open');
-                if (!openPending(path)) {
+                if (!(await openPending(path))) {
                     setStatus('Open a .csv file to begin (File → Open, or double-click a file)');
                     const overlay = document.getElementById('loading-overlay');
                     if (overlay) overlay.style.display = 'none';
