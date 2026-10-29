@@ -15,8 +15,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Listener, Manager, State, Theme, WindowEvent};
+use tauri::{AppHandle, Emitter, Listener, Manager, RunEvent, State, Theme, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 #[cfg(windows)]
@@ -87,14 +86,14 @@ fn kill_sidecar(app: &AppHandle) {
     *state.sidecar_stdin.lock().unwrap() = None;
 }
 
-fn show_main_window(app: &AppHandle) {
+// The window title is the absolute path of the open file (the app name is
+// shown only until a file is opened). document.title alone does not reliably
+// reach the native title bar, so set it from the Rust side as well.
+fn set_window_title(app: &AppHandle, title: &str) {
     for window in app.webview_windows().values() {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        let _ = window.set_title(title);
     }
 }
-
 
 // Strip the \\?\ verbatim prefix some Tauri path APIs return — it breaks
 // CreateProcess' working-directory handling for the sidecar spawn.
@@ -276,6 +275,33 @@ fn save_export_file(app: AppHandle, filename: String, text: String) -> Option<St
     Some(path.to_string_lossy().to_string())
 }
 
+// Opens Windows Explorer with the given file preselected. Invoked from the
+// grid's right-click menu ("在文件资源管理器中显示").
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {path}"));
+    }
+    #[cfg(windows)]
+    {
+        // Explorer parses its own command line, so use raw_arg to pass
+        // /select,"<path>" verbatim — commas and spaces in file names stay
+        // intact regardless of how std would otherwise quote the argument.
+        let mut command = Command::new("explorer.exe");
+        command.raw_arg(format!("/select,\"{}\"", p.display()));
+        command.creation_flags(CREATE_NO_WINDOW);
+        command.spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let dir = p.parent().unwrap_or(&p);
+        Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 // ── Recent files + menu ──
 
 fn add_recent(state: &AppState, path: &str) {
@@ -333,6 +359,7 @@ fn open_path(app: &AppHandle, path: String) {
     if let Ok(menu) = build_menu(app) {
         let _ = app.set_menu(menu);
     }
+    set_window_title(app, &path);
     *state.pending_file.lock().unwrap() = Some(path.clone());
     let _ = app.emit("open-file", path);
 }
@@ -371,20 +398,16 @@ fn csv_arg(args: &[String]) -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // Second launch (e.g. double-clicking another CSV): forward the
-            // path to the running instance and raise its window.
-            if let Some(path) = csv_arg(&args) {
-                open_path(app, path);
-            }
-            show_main_window(app);
-        }))
+    let app = tauri::Builder::default()
+        // No single-instance plugin: every launch (including double-clicking
+        // another CSV) gets its own process, window and sidecar, so several
+        // files can be open in parallel.
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = load_config(&config_path);
             let initial_file = csv_arg(&std::env::args().collect::<Vec<_>>());
+            let initial_title = initial_file.clone();
 
             app.manage(AppState {
                 sidecar_stdin: Arc::new(Mutex::new(None)),
@@ -399,38 +422,12 @@ pub fn run() {
                 app.set_menu(menu)?;
             }
 
-            // System tray: the app keeps running in the background — closing
-            // the window hides it, the tray icon brings it back, and only
-            // "Quit" here actually exits (killing the sidecar first).
-            let tray_menu = MenuBuilder::new(app)
-                .item(&MenuItemBuilder::with_id("tray-show", "显示 CSV Grid Editor Plus").build(app)?)
-                .item(&MenuItemBuilder::with_id("tray-quit", "退出 Quit").build(app)?)
-                .build()?;
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().expect("app icon").clone())
-                .tooltip("CSV Grid Editor Plus")
-                .menu(&tray_menu)
-                .on_menu_event(|app, event| match event.id().0.as_str() {
-                    "tray-show" => show_main_window(app),
-                    "tray-quit" => {
-                        kill_sidecar(app);
-                        // app.exit(0) 在 Windows 上销毁托盘图标时会在 GDI32!InternalDeleteObject 崩溃
-                        // (共享图标句柄 double-delete)。改用硬退出绕过那段清理。
-                        std::process::exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+            // Launched with a CSV argument: show its absolute path right away.
+            if let Some(path) = initial_title {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title(&path);
+                }
+            }
 
             // Frontend → sidecar bridges. 'sidecar-in' carries webview-protocol
             // messages (wrapped as {cmd:'msg'}); 'host-cmd' carries session
@@ -490,11 +487,10 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             match event {
-                // Closing the window hides it to the tray instead of quitting —
-                // the app (and its sidecar) keeps running in the background.
-                WindowEvent::CloseRequested { api, .. } => {
-                    let _ = window.hide();
-                    api.prevent_close();
+                // No tray: closing the window terminates the app. Kill the
+                // Node engine explicitly so no orphan sidecar is left behind.
+                WindowEvent::CloseRequested { .. } => {
+                    kill_sidecar(&window.app_handle());
                 }
                 // Follow-live: when the OS theme flips and the user chose "Follow
                 // System", push the new resolved theme to the frontend.
@@ -511,9 +507,22 @@ pub fn run() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![get_config, get_pending_file, save_export_file])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            get_pending_file,
+            save_export_file,
+            reveal_in_explorer
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        // Any exit path (window close, File → Exit, OS shutdown) must take the
+        // sidecar with it.
+        if let RunEvent::Exit = event {
+            kill_sidecar(app_handle);
+        }
+    });
 }
 
 fn main() {

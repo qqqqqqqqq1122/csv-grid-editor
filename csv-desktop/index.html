@@ -230,7 +230,7 @@
         //   3. mount assets/webview.js
         // Opening another file stores the path and reloads.
         (function () {
-            const state = { booted: false, config: null, meta: null };
+            const state = { booted: false, config: null, meta: null, filePath: null };
             window.__csvBoot = state;
 
             const BOOTSTRAP_TYPES = new Set([
@@ -261,6 +261,12 @@
             });
 
             __tauri.event.listen('theme-changed', (e) => applyTheme(e.payload));
+
+            // Right-click menu file actions (see src/webview/features/file-actions.ts).
+            // The bundle dispatches these events so the shared VS Code webview
+            // code stays host-agnostic.
+            window.addEventListener('csv-desktop-copy-path', () => copyAbsolutePath());
+            window.addEventListener('csv-desktop-reveal-path', () => revealInExplorer());
 
             document.addEventListener('keydown', (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -298,6 +304,42 @@
                 }
             }
 
+            function copyAbsolutePath() {
+                const path = state.filePath;
+                if (!path) { setStatus('尚未打开文件'); return; }
+                const done = () => setStatus('已复制绝对路径: ' + path);
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(path).then(done).catch(() => legacyCopy(path, done));
+                } else {
+                    legacyCopy(path, done);
+                }
+            }
+
+            // execCommand fallback for environments where the async Clipboard
+            // API is unavailable.
+            function legacyCopy(text, done) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); done(); }
+                catch { setStatus('复制绝对路径失败'); }
+                ta.remove();
+            }
+
+            async function revealInExplorer() {
+                const path = state.filePath;
+                if (!path) { setStatus('尚未打开文件'); return; }
+                try {
+                    await __tauri.core.invoke('reveal_in_explorer', { path });
+                    setStatus('已在文件资源管理器中显示');
+                } catch (err) {
+                    setStatus('无法在文件资源管理器中显示: ' + err);
+                }
+            }
+
             async function onExportData(msg) {
                 try {
                     const written = await __tauri.core.invoke('save_export_file', {
@@ -332,11 +374,14 @@
                 s.src = 'assets/webview.js';
                 document.body.appendChild(s);
                 state.booted = true;
-                document.title = meta.fileName + ' — CSV Grid Editor Plus';
+                // Top-left of the window shows the absolute path of the open
+                // file (the Rust shell sets the native title as well).
+                document.title = state.filePath || meta.fileName || 'CSV Grid Editor Plus';
             }
 
             function openPending(path) {
                 if (path) {
+                    state.filePath = path;
                     __tauri.event.emit('host-cmd', { cmd: 'open', path: path, config: state.config });
                     return true;
                 }

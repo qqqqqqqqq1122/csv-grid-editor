@@ -24,8 +24,9 @@ const webviewCss = fs.readFileSync(path.join(desktop, 'dist', 'assets', 'webview
 
 // Ids the bundle creates dynamically at runtime (not expected in index.html).
 const DYNAMIC_IDS = new Set([
-    'preview-text', // created by the bootstrap for preview documents
-    '_row-flash',   // created by the bundle (row highlight element)
+    'preview-text',      // created by the bootstrap for preview documents
+    '_row-flash',        // created by the bundle (row highlight element)
+    'col-ctx-copy-name', // created by the bundle's header-copy feature
 ]);
 
 let failures = 0;
