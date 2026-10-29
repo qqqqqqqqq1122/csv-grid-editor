@@ -530,6 +530,11 @@ body.vscode-high-contrast #grid-container.cm-on {
     font-weight: 600 !important;
     border-right: 1px solid var(--vscode-tree-indentGuidesStroke, #585858) !important;
 }
+/* Click a column header, then Ctrl+C copies that header's name — the ring shows
+   which header is the copy target. Cleared when a data cell is clicked. */
+:is(.ag-theme-alpine-dark, .ag-theme-alpine) .ag-header-cell.header-copy-focus {
+    box-shadow: inset 0 0 0 2px var(--vscode-focusBorder, #007fd4);
+}
 /* The header label is a flex row: [type badge] [name] [sort + menu + filter].
    The name shrinks with an ellipsis so the badge and sort indicators (including
    the multi-sort order number) always stay visible, even on narrow columns. */

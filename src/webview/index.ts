@@ -17,6 +17,8 @@ import { setupRenameColumn }   from './features/rename-column';
 import { setupColumnChooser }  from './features/column-chooser';
 import { setupColorMode }      from './features/color-mode';
 import { setupColumnSearch }   from './features/column-search';
+import { setupDesktopFileActions } from './features/file-actions';
+import { setupHeaderCopy }     from './features/header-copy';
 import { setupKeyboard }       from './keyboard';
 import { setupMessaging }      from './messaging';
 import { setupPopups }         from './features/popups';
@@ -35,11 +37,15 @@ setupPagination();
 setupGoToRow();
 setupDuplicates();
 setupPaste();
+// Registered before setupRangeSelect so a focused header's Ctrl+C wins over the
+// range-selection copy handler (both listen on document in the capture phase).
+setupHeaderCopy();
 setupRangeSelect();
 setupRenameColumn();
 setupColumnChooser();
 setupColorMode();
 setupColumnSearch();
+setupDesktopFileActions();
 setupKeyboard();
 setupMessaging();
 setupPopups();

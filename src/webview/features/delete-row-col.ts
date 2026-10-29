@@ -20,6 +20,7 @@ import {
 } from './range-select';
 import { freezeRows, unfreezeRow, unfreezeAllRows, frozenRowCount } from './freeze-rows';
 import { closeAllPopups } from './popups';
+import { appendDesktopFileActions } from './file-actions';
 
 // ── Data mutations ────────────────────────────────────────────────────────────
 
@@ -343,6 +344,9 @@ function showContextMenu(x: number, y: number, rowIndex: number | null, colId: s
         });
         menu.appendChild(delColItem);
     }
+
+    // Desktop shell: file path actions at the bottom of the row menu.
+    appendDesktopFileActions(menu, 'row-ctx-item');
 
     // Remove orphan separators: drop a leading/trailing separator and any two
     // that ended up adjacent (e.g. a middle group rendered nothing).
