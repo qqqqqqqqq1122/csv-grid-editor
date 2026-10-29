@@ -20,7 +20,7 @@ function test(name, fn) {
 console.log('csv-core: large file mode decision logic');
 
 test('small files always load in full regardless of mode', () => {
-    for (const mode of ['ask', 'head', 'tail', 'all']) {
+    for (const mode of ['ask', 'head', 'tail', 'all', 'full', 'chunked', 'plaintext']) {
         assert.strictEqual(planForLargeFile(mode, SMALL, THRESHOLD), 'full', `mode ${mode}`);
     }
 });
@@ -33,6 +33,14 @@ test('mode "head"/"tail"/"all" map to their open plans', () => {
     assert.strictEqual(planForLargeFile('head', BIG, THRESHOLD), 'head');
     assert.strictEqual(planForLargeFile('tail', BIG, THRESHOLD), 'tail');
     assert.strictEqual(planForLargeFile('all', BIG, THRESHOLD), 'full');
+});
+
+test('desktop modes "full"/"chunked"/"plaintext" map to their open plans', () => {
+    assert.strictEqual(planForLargeFile('full', BIG, THRESHOLD), 'full');
+    assert.strictEqual(planForLargeFile('chunked', BIG, THRESHOLD), 'chunked');
+    assert.strictEqual(planForLargeFile('plaintext', BIG, THRESHOLD), 'plaintext');
+    assert.strictEqual(normalizeLargeFileMode('chunked'), 'chunked');
+    assert.strictEqual(normalizeLargeFileMode('plaintext'), 'plaintext');
 });
 
 test('unknown/garbage modes (incl. legacy "prompt") fall back to ask', () => {

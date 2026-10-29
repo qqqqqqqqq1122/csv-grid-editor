@@ -318,6 +318,17 @@ fn add_recent(state: &AppState, path: &str) {
     save_config(&state.config_path, &cfg);
 }
 
+fn large_file_mode(cfg: &Value) -> &'static str {
+    match cfg.get("largeFileMode").and_then(Value::as_str) {
+        Some("full") | Some("all") => "full",
+        Some("head") => "head",
+        Some("tail") => "tail",
+        Some("chunked") => "chunked",
+        Some("plaintext") => "plaintext",
+        _ => "ask",
+    }
+}
+
 fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let state = app.state::<AppState>();
     let cfg = state.config.lock().unwrap().clone();
@@ -343,9 +354,26 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .item(&CheckMenuItemBuilder::with_id("theme-light", "Light").checked(theme_mode == "light").build(app)?)
         .build()?;
 
+    // Large-file open mode lives in the File menu (no modal chooser). The
+    // selection is persisted in config.json and applies to files over 10 MB.
+    let lf_mode = large_file_mode(&cfg);
+    let head_rows = cfg.get("headRows").and_then(Value::as_u64).unwrap_or(1000);
+    let head_label = format!("前 {} 行", head_rows);
+    let tail_label = format!("后 {} 行", head_rows);
+    let lf_sub = SubmenuBuilder::new(app, "大文件打开方式")
+        .item(&CheckMenuItemBuilder::with_id("lfmode-ask", "自动（默认）").checked(lf_mode == "ask").build(app)?)
+        .item(&CheckMenuItemBuilder::with_id("lfmode-full", "完整打开").checked(lf_mode == "full").build(app)?)
+        .item(&CheckMenuItemBuilder::with_id("lfmode-head", &head_label).checked(lf_mode == "head").build(app)?)
+        .item(&CheckMenuItemBuilder::with_id("lfmode-tail", &tail_label).checked(lf_mode == "tail").build(app)?)
+        .item(&CheckMenuItemBuilder::with_id("lfmode-chunked", "500 行分页").checked(lf_mode == "chunked").build(app)?)
+        .item(&CheckMenuItemBuilder::with_id("lfmode-plaintext", "纯文本").checked(lf_mode == "plaintext").build(app)?)
+        .build()?;
+
     let file_sub = SubmenuBuilder::new(app, "File")
         .item(&MenuItemBuilder::with_id("file-open", "Open CSV…").build(app)?)
         .item(&recent_sub.build()?)
+        .separator()
+        .item(&lf_sub)
         .separator()
         .item(&PredefinedMenuItem::quit(app, Some("Exit"))?)
         .build()?;
@@ -362,6 +390,18 @@ fn open_path(app: &AppHandle, path: String) {
     set_window_title(app, &path);
     *state.pending_file.lock().unwrap() = Some(path.clone());
     let _ = app.emit("open-file", path);
+}
+
+fn set_large_file_mode(app: &AppHandle, mode: &str) {
+    let state = app.state::<AppState>();
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg["largeFileMode"] = json!(mode);
+        save_config(&state.config_path, &cfg);
+    }
+    if let Ok(menu) = build_menu(app) {
+        let _ = app.set_menu(menu);
+    }
 }
 
 fn set_theme_mode(app: &AppHandle, mode: &str) {
@@ -483,6 +523,8 @@ pub fn run() {
                 }
             } else if let Some(mode) = id.strip_prefix("theme-") {
                 set_theme_mode(app, mode);
+            } else if let Some(mode) = id.strip_prefix("lfmode-") {
+                set_large_file_mode(app, mode);
             }
         })
         .on_window_event(|window, event| {

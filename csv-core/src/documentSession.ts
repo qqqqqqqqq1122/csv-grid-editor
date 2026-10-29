@@ -166,6 +166,12 @@ export class DocumentSession {
                 this.totalLineCount = result.totalLineCount;
                 this.isPreview = true;
                 this.previewMode = 'tail';
+            } else if (mode === 'plaintext') {
+                // Raw read-only view: no CSV parsing, no grid. The whole file
+                // is handed to the webview, matching the VS Code plain-text mode.
+                this.content = await fs.promises.readFile(filePath, 'utf8');
+                this.isPreview = true;
+                this.previewMode = 'plaintext';
             } else if (mode === 'chunked') {
                 this.isChunked = true;
                 this.isPreview = true;
